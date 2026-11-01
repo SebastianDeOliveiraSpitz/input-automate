@@ -4,7 +4,7 @@
 
 - [x] T1: Scaffold project: pyproject.toml, src/input_automation layout, pytest/ruff/mypy config, CLI stub (`input-automation --version`), all gates green
 - [x] T2: Macro schema: Pydantic models for triggers/actions, YAML loader + validation with clear error messages, round-trip tests
-- [ ] T3: Device discovery: enumerate /dev/input via evdev, device info API, CLI `list-devices`
+- [x] T3: Device discovery: enumerate /dev/input via evdev, device info API, CLI `list-devices`
 
 ## M2 — Input capture & output
 

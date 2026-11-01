@@ -30,7 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-input-automation = "input_automation.cli:main"
+input-automation = "input_automation.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
