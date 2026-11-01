@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "input-automation"
+version = "0.1.0"
+description = "Automate inputs on Linux (Wayland) with device- and vision-driven macros"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+dependencies = [
+    "PySide6>=6.7",
+    "evdev>=1.7",
+    "python-uinput>=1.0",
+    "opencv-python>=4.10",
+    "numpy>=1.26",
+    "PyYAML>=6.0",
+    "typer>=0.12",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+input-automation = "input_automation.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+strict = true

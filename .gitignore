@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Runtime writes (AGENTS.md rule)
+logs/*
+!logs/.gitkeep

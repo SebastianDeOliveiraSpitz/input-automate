@@ -30,6 +30,17 @@ support later). A persistent JSONL execution log under `logs/` records when
 macros fire and what they did. An interactive visual region picker is a
 must-have for v1 (ships with the GUI milestone).
 
+Architecture decisions (confirmed):
+- Input capture: raw evdev reading of /dev/input (requires input group / root
+  udev rule, works system-wide, catches all physical devices).
+- Output injection: uinput virtual devices (requires udev rule for uinput).
+- Macro engine: full conditional logic — if/else based on screen state,
+  loops, and variables. Not just linear sequences.
+- Vision: pixel color / region threshold analysis only for v1 (no OCR or
+  object detection planned).
+- Recording & replay: a core feature. Capture user actions via evdev, save
+  as macros, and replay them (same macro engine, loop + conditional support).
+
 ## Stack
 
 - Python >= 3.12
