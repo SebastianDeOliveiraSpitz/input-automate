@@ -50,3 +50,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 python_version = "3.12"
 mypy_path = "src"
 strict = true
+
+[[tool.mypy.overrides]]
+module = "uinput"
+ignore_missing_imports = true
