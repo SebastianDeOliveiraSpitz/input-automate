@@ -53,6 +53,25 @@ Architecture decisions (confirmed):
 - Pydantic — macro schema validation
 - pytest, ruff, mypy — quality gates
 
+## Deployment
+
+- Official install method: pipx from GitHub release tags
+  (`pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate@<tag>`,
+  SSH remote for pushes: git@github.com:SebastianDeOliveiraSpitz/input-automate.git).
+  PySide6 bundles its own Qt, so no system Qt is needed on the target.
+- Every release tag ships the same installer script `install/system-setup.sh`
+  (udev rule for uinput, `input` group check, optional systemd user unit for
+  the always-on macro daemon). pipx cannot do system-level setup, so the
+  script must be run once per target machine and is idempotent.
+- GUI usage targets real Fedora GNOME machines; the daemon + CLI can also run
+  on headless hosts.
+- Development happens on the headless mgmt-vm: GUI tests (pytest-qt) must run
+  with `QT_QPA_PLATFORM=offscreen`; real-GUI behavior is verified on fedora1.
+- PyInstaller binary and RPM packaging are out of scope for v1 (revisit only
+  if a no-Python target machine appears).
+- AppImage rejected: bundling PySide6 + OpenCV (~250 MB, fragile tooling) buys
+  nothing here because the udev rule/system script is required anyway.
+
 ## Rules
 
 - Use KISS and DRY
