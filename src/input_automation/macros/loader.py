@@ -1,7 +1,13 @@
-"""Load macro YAML files into validated Pydantic models with clear errors."""
+"""Load macro YAML files and Python scripts into validated models.
+
+YAML macros are validated directly against the schema. Python macros
+(T11 escape hatch) define a ``build(builder)`` function; see
+:mod:`input_automation.macros.script`.
+"""
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,8 +19,9 @@ if TYPE_CHECKING:
 from pydantic import ValidationError
 
 from input_automation.macros.models import Macro
+from input_automation.macros.script import MacroBuilder
 
-__all__ = ["LoadError", "load_macro", "load_macros"]
+__all__ = ["LoadError", "load_macro", "load_macros", "load_python_macro"]
 
 
 class LoadError(Exception):
@@ -35,8 +42,36 @@ def load_macro(path: Path) -> Macro:
         raise LoadError(f"{path.name}: invalid macro: {exc}") from exc
 
 
+def load_python_macro(path: Path) -> Macro:
+    """Load a Python macro module: it must define ``build(builder)``."""
+    spec = importlib.util.spec_from_file_location(
+        f"input_automation._user_macro_{path.stem}", path
+    )
+    assert spec is not None and spec.loader is not None  # noqa: S101 - path exists
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise LoadError(f"{path.name}: error during import: {exc}") from exc
+    build = getattr(module, "build", None)
+    if not callable(build):
+        raise LoadError(
+            f"{path.name}: module must define a 'build(builder)' function"
+        )
+    builder = MacroBuilder(name=path.stem)
+    try:
+        build(builder)
+        return builder.build()
+    except ValidationError as exc:
+        raise LoadError(f"{path.name}: invalid macro: {exc}") from exc
+    except Exception as exc:
+        raise LoadError(f"{path.name}: error in build(): {exc}") from exc
+
+
 def load_macros(directory: Path) -> Iterator[tuple[Path, Macro]]:
-    """Yield (path, macro) for each valid *.yaml/*.yml file in the directory."""
+    """Yield (path, macro) for each macro file (*.yaml, *.yml, *.py)."""
     for pattern in ("*.yaml", "*.yml"):
         for path in sorted(directory.glob(pattern)):
             yield path, load_macro(path)
+    for path in sorted(directory.glob("*.py")):
+        yield path, load_python_macro(path)
