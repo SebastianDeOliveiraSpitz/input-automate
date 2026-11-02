@@ -82,7 +82,7 @@ class GStreamerFrameSource:
         if self._running:
             raise RuntimeError("frame source already running")
         self._running = True
-        self._error: str | None = None
+        self._error = None
         self._sink.set_property("emit-signals", True)
         self._sink.connect("new-sample", self._on_new_sample)
         bus = self._pipeline.get_bus()

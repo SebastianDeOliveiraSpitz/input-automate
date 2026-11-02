@@ -16,15 +16,14 @@ Two session factories produce a PipeWire node id of the monitor:
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
 from input_automation.capture.base import CaptureError, Frame
 from input_automation.capture.gstsource import (
     GStreamerFrameSource,
-    build_pipeline,
     _ensure_gst,
+    build_pipeline,
 )
 
 __all__ = [
@@ -284,7 +283,7 @@ def mutter_screencast_session() -> int:
     return node["id"]
 
 
-_MAINLOOP: "tuple[Any, Any, Any] | None" = None
+_MAINLOOP: tuple[Any, Any, Any] | None = None
 
 
 def _keep_loop_alive(loop: Any, thread: Any, bus: Any) -> None:
