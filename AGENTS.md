@@ -59,10 +59,13 @@ Architecture decisions (confirmed):
   (`pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate@<tag>`,
   SSH remote for pushes: git@github.com:SebastianDeOliveiraSpitz/input-automate.git).
   PySide6 bundles its own Qt, so no system Qt is needed on the target.
-- Every release tag ships the same installer script `install/system-setup.sh`
-  (udev rule for uinput, `input` group check, optional systemd user unit for
-  the always-on macro daemon). pipx cannot do system-level setup, so the
-  script must be run once per target machine and is idempotent.
+- Every release tag ships the same installer script `install/system-setup.sh`.
+  Run it BEFORE `pipx install` — it installs the minimal build deps (gcc,
+  make, matching python3.X-devel; NOT the whole development-tools group)
+  needed to compile the evdev C extension on Pythons without prebuilt wheels,
+  then applies the udev rule for uinput, checks the `input` group, and (later)
+  installs the systemd user unit for the always-on macro daemon. The script
+  is idempotent and dnf-based (Fedora/RHEL). pipx cannot do any of this.
 - GUI usage targets real Fedora GNOME machines; the daemon + CLI can also run
   on headless hosts.
 - Development happens on the headless mgmt-vm: GUI tests (pytest-qt) must run

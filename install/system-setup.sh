@@ -2,7 +2,13 @@
 # Idempotent system setup for input-automation (run once per machine, as root):
 #   sudo ./install/system-setup.sh
 #
+# Run this BEFORE `pipx install ...` — the evdev C extension has no prebuilt
+# wheel for many Python versions, so building it needs gcc + matching python
+# headers. This script installs exactly those (NOT the full development-tools
+# group), then does the uinput/udev/input-group setup.
+#
 # Does:
+#   0. Install minimal build deps (gcc, make, matching python3.X-devel)
 #   1. Load the uinput kernel module at boot
 #   2. Install a udev rule making /dev/uinput writable by the input group
 #   3. Add the invoking user to the input group (relogin required)
@@ -13,6 +19,24 @@ if [[ ${EUID} -ne 0 ]]; then
   echo "error: run as root (sudo $0)" >&2
   exit 1
 fi
+
+if ! command -v dnf >/dev/null 2>&1; then
+  echo "error: this script currently supports dnf-based systems (Fedora/RHEL)" >&2
+  exit 1
+fi
+
+# 0. minimal build dependencies for C extensions (evdev, python-uinput)
+DEPS=(gcc make)
+PYVER="$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+if [[ -f "/usr/include/python${PYVER}/Python.h" ]]; then
+  echo "python${PYVER} headers already present"
+elif dnf -q list "python${PYVER}-devel" >/dev/null 2>&1; then
+  DEPS+=("python${PYVER}-devel")
+else
+  DEPS+=("python3-devel")
+fi
+echo "installing build deps: ${DEPS[*]}"
+dnf install -y "${DEPS[@]}"
 
 # 1. uinput module at boot
 if ! grep -qs '^uinput$' /etc/modules-load.d/uinput.conf; then
@@ -38,3 +62,4 @@ if ! id -nG "${TARGET_USER}" | grep -qw input; then
 fi
 
 echo "system setup complete"
+echo "next step:  pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate.git@v0.1.0a1"
