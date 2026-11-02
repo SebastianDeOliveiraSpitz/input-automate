@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import cv2
 import typer
@@ -13,6 +13,12 @@ from input_automation import __version__
 from input_automation.capture.factory import BACKEND_NAMES, create_backend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
+from input_automation.macros.loader import (
+    LoadError,
+    load_macro,
+    load_python_macro,
+)
+from input_automation.macros.orchestrator import MacroOrchestrator
 from input_automation.output.virtual import (
     RecordingBackend,
     VirtualDevice,
@@ -20,6 +26,8 @@ from input_automation.output.virtual import (
 )
 
 app = typer.Typer(help="Automate inputs on Linux (Wayland).")
+macros_app = typer.Typer(help="List, validate, and run macros.")
+app.add_typer(macros_app, name="macros")
 
 
 def _print_version(value: bool) -> None:
@@ -137,7 +145,123 @@ def test_output_cmd(
     typer.echo("test-output done")
 
 
+_DEFAULT_MACRO_DIR = Path("macros")
 _DEFAULT_SCREENSHOT = Path("screenshot.png")
+
+
+class _NullSink:
+    """No-op output sink for --dry-run (orchestrator never touches it)."""
+
+    def key_tap(self, code: int) -> None:
+        del code
+
+    def key_press(self, code: int) -> None:
+        del code
+
+    def key_release(self, code: int) -> None:
+        del code
+
+    def mouse_move(self, dx: int, dy: int) -> None:
+        del dx, dy
+
+    def mouse_click(self, button: str) -> None:
+        del button
+
+    def scroll(self, dy: int) -> None:
+        del dy
+
+
+def _load_macro_by_suffix(path: Path) -> Any:
+    """Dispatch to the YAML or Python macro loader by file suffix."""
+    if path.suffix in (".yaml", ".yml"):
+        return load_macro(path)
+    return load_python_macro(path)
+
+
+@macros_app.command("list")
+def macros_list(
+    directory: Annotated[
+        Path, typer.Argument(help="Macro directory.")
+    ] = _DEFAULT_MACRO_DIR,
+    json_output: bool = typer.Option(False, "--json", help="Output JSON array."),
+) -> None:
+    """List macros in a directory (yaml and python)."""
+    macros: list[dict[str, object]] = []
+    warnings: list[str] = []
+    for pattern in ("*.yaml", "*.yml", "*.py"):
+        for path in sorted(directory.glob(pattern)):
+            try:
+                if path.suffix in (".yaml", ".yml"):
+                    macro = load_macro(path)
+                else:
+                    macro = load_python_macro(path)
+            except (LoadError, FileNotFoundError) as exc:
+                warnings.append(f"warning: {path.name}: {exc}")
+                continue
+            macros.append(
+                {
+                    "file": path.name,
+                    "name": macro.name,
+                    "description": macro.description,
+                    "triggers": [str(t.kind) for t in macro.triggers],
+                }
+            )
+    if json_output:
+        typer.echo(json.dumps(macros, indent=2))
+        return
+    if not macros:
+        typer.echo(f"no macros found in {directory}")
+    else:
+        for entry in macros:
+            trigger_kinds = cast("list[str]", entry["triggers"])
+            triggers = ",".join(trigger_kinds)
+            typer.echo(
+                f"{entry['file']}: {entry['name']} [{triggers}] {entry['description']}"
+            )
+    for warning in warnings:
+        typer.echo(warning, err=True)
+
+
+@macros_app.command("validate")
+def macros_validate(
+    path: Annotated[Path, typer.Argument(help="Macro file to validate.")],
+) -> None:
+    """Validate one macro file against the schema."""
+    try:
+        macro = _load_macro_by_suffix(path)
+        typer.echo(f"{path.name}: ok ({macro.name})")
+    except (LoadError, FileNotFoundError) as exc:
+        typer.echo(f"{path.name}: invalid macro: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+
+@macros_app.command("run")
+def macros_run(
+    path: Annotated[Path, typer.Argument(help="Macro file to run.")],
+    dry_run: bool = typer.Option(False, "--dry-run", help="Walk the tree without injecting."),
+    repeat: int = typer.Option(1, "--repeat", min=1, help="How often to run."),
+) -> None:
+    """Run a macro once (or --repeat N times)."""
+    try:
+        macro = _load_macro_by_suffix(path)
+    except (LoadError, FileNotFoundError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    if dry_run:
+        orchestrator = MacroOrchestrator(sink=_NullSink(), dry_run=True)
+        orchestrator.run(macro, repeat=repeat)
+        typer.echo(f"dry run: {macro.name} executed without injecting")
+        return
+    if not uinput_available():
+        typer.echo(
+            "error: /dev/uinput is not writable — run install/system-setup.sh",
+            err=True,
+        )
+        raise typer.Exit(1)
+    with VirtualDevice() as device:
+        orchestrator = MacroOrchestrator(sink=device)
+        orchestrator.run(macro, repeat=repeat)
+    typer.echo(f"ran {macro.name} x{repeat}")
 
 
 def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> None:
