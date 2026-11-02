@@ -326,11 +326,11 @@ class ScreencastBackend:
     def start(self) -> None:
         if self._running:
             raise RuntimeError("capture backend already running")
-        # libpipewire must be initialized BEFORE the compositor session flow:
-        # when GStreamer initializes only afterwards (inside the pipeline
-        # build), the mutter stream node never becomes visible to pipewiresrc
-        # and every connect fails with "target not found". Empirically
-        # established on this stack; keep this ordering.
+        # GStreamer init order relative to the D-Bus flow is NOT the cause of
+        # "target not found"; keep the real invariant: the D-Bus connection
+        # object must stay referenced after mutter_screencast_session returns
+        # (PyGObject finalizes it otherwise, Mutter kills the session, and the
+        # pipewire node vanishes from the registry). See _keep_loop_alive.
         _ensure_gst()
         node_id = self._session_factory()
         self._source = self._pipeline_factory(node_id)

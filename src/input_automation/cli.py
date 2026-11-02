@@ -10,7 +10,7 @@ import typer
 from evdev import ecodes
 
 from input_automation import __version__
-from input_automation.capture.mock import MockCaptureBackend
+from input_automation.capture.factory import BACKEND_NAMES, create_backend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
 from input_automation.output.virtual import (
@@ -140,27 +140,54 @@ def test_output_cmd(
 _DEFAULT_SCREENSHOT = Path("screenshot.png")
 
 
-@app.command()
-def screenshot(
+def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> None:
+    """Grab a single frame from a capture backend and write it as PNG."""
+    try:
+        backend = create_backend(backend_name)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    try:
+        backend.start()
+        frame = backend.grab()
+    finally:
+        backend.stop()
+    if not cv2.imwrite(str(output), frame.image):
+        typer.echo(f"error: could not write {output}", err=True)
+        raise typer.Exit(1)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "path": str(output),
+                    "width": frame.width,
+                    "height": frame.height,
+                    "backend": backend_name,
+                }
+            )
+        )
+    else:
+        typer.echo(f"saved {output} ({frame.width}x{frame.height})")
+
+
+@app.command("capture")
+@app.command("screenshot", hidden=True)
+def capture(
     output: Annotated[
         Path,
         typer.Option("--output", "-o", help="PNG file to write."),
     ] = _DEFAULT_SCREENSHOT,
     backend: Annotated[
         str,
-        typer.Option("--backend", help="Capture backend. 'mock' works everywhere."),
+        typer.Option(
+            "--backend",
+            help=f"Capture backend ({', '.join(BACKEND_NAMES)}). 'mock' works everywhere.",
+        ),
     ] = "mock",
+    json_output: bool = typer.Option(False, "--json", help="Print metadata as JSON."),
 ) -> None:
     """Capture one frame and save it as PNG."""
-    if backend != "mock":
-        typer.echo(f"error: unknown backend {backend!r} (only 'mock' for now)", err=True)
-        raise typer.Exit(2)
-    capture = MockCaptureBackend()
-    frame = capture.grab()
-    if not cv2.imwrite(str(output), frame.image):
-        typer.echo(f"error: could not write {output}", err=True)
-        raise typer.Exit(1)
-    typer.echo(f"saved {output} ({frame.width}x{frame.height})")
+    _capture_one_frame(backend, output, json_output)
 
 
 if __name__ == "__main__":

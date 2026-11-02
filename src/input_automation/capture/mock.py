@@ -67,8 +67,10 @@ class MockCaptureBackend:
             yield self._make_frame()
             time.sleep(self._interval)
 
-    def grab(self) -> Frame:
-        """Convenience: one frame without the generator loop."""
+    def grab(self, timeout: float = 10.0) -> Frame:
+        """One frame without the generator loop (``timeout`` is accepted
+        for CaptureBackend protocol compatibility and unused here)."""
+        del timeout
         if not self._running:
             self.start()
             self.stop()

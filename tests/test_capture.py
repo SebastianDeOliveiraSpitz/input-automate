@@ -104,7 +104,7 @@ def test_screenshot_cli(tmp_path: Path) -> None:
 
 def test_screenshot_cli_unknown_backend() -> None:
     result = CliRunner().invoke(
-        cli_module.app, ["screenshot", "--backend", "portal"]
+        cli_module.app, ["screenshot", "--backend", "x11grab"]
     )
     assert result.exit_code == 2
-    assert "unknown backend" in result.output
+    assert "unknown capture backend" in result.output
