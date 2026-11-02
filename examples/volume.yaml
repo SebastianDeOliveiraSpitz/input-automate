@@ -1,0 +1,37 @@
+# Example macro: press F10 to lower the volume three steps.
+#
+# NOTE: the step language has no arithmetic (SetStep takes literal values),
+# so repetition is expressed as a flat sequence. `while` loops only terminate
+# via max_iterations, which raises when reached — reserve them for conditions
+# that can genuinely turn false (e.g. screen state in a later milestone).
+name: volume-down
+description: F10 lowers the volume by three steps.
+triggers:
+  - kind: key
+    code: F10
+    state: down
+steps:
+  - action:
+      op: press
+      target: VOLUMEDOWN
+  - action:
+      op: release
+      target: VOLUMEDOWN
+  - action:
+      op: wait
+      ms: 50
+  - action:
+      op: press
+      target: VOLUMEDOWN
+  - action:
+      op: release
+      target: VOLUMEDOWN
+  - action:
+      op: wait
+      ms: 50
+  - action:
+      op: press
+      target: VOLUMEDOWN
+  - action:
+      op: release
+      target: VOLUMEDOWN
