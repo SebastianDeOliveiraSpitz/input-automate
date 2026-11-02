@@ -17,7 +17,7 @@
 - [x] T7: Capture abstraction: Frame model (numpy BGR), CaptureBackend protocol, mock backend with animated bar pattern, CLI `screenshot`
 - [x] T7b: PipeWire portal backend: GNOME portal screencast → continuous frames; needs a real GNOME session (mgmt-vm GNOME install or fedora1) — mutter (unattended) flow verified live (pipeline reaches PLAYING, 3/3 repro green); portal (dialog) variant implemented but needs one interactive grant
 - [x] T8: OpenCV primitives: region crop, template match, color thresholds, bar-fraction measurement — pure functions + fixture tests
-- [ ] T9: Visual trigger engine: watch rules (region + condition → trigger), debouncing, wired to trigger engine
+- [x] T9: Visual trigger engine: watch rules (region + condition → trigger), debouncing, wired to trigger engine — color rules with rising-edge firing + per-rule debounce_ms, injectable clock; callback contract matches TriggerEngine (T10 wires both to actions)
 
 ## M4 — Macros end-to-end
 
