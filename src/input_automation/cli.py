@@ -5,10 +5,12 @@ import time
 from pathlib import Path
 from typing import Annotated
 
+import cv2
 import typer
 from evdev import ecodes
 
 from input_automation import __version__
+from input_automation.capture.mock import MockCaptureBackend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
 from input_automation.output.virtual import (
@@ -133,6 +135,32 @@ def test_output_cmd(
     if isinstance(backend, RecordingBackend):
         typer.echo(f"dry-run: recorded {len(backend.events)} emissions: {backend.describe()}")
     typer.echo("test-output done")
+
+
+_DEFAULT_SCREENSHOT = Path("screenshot.png")
+
+
+@app.command()
+def screenshot(
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="PNG file to write."),
+    ] = _DEFAULT_SCREENSHOT,
+    backend: Annotated[
+        str,
+        typer.Option("--backend", help="Capture backend. 'mock' works everywhere."),
+    ] = "mock",
+) -> None:
+    """Capture one frame and save it as PNG."""
+    if backend != "mock":
+        typer.echo(f"error: unknown backend {backend!r} (only 'mock' for now)", err=True)
+        raise typer.Exit(2)
+    capture = MockCaptureBackend()
+    frame = capture.grab()
+    if not cv2.imwrite(str(output), frame.image):
+        typer.echo(f"error: could not write {output}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"saved {output} ({frame.width}x{frame.height})")
 
 
 if __name__ == "__main__":
