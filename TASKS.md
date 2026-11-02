@@ -21,9 +21,9 @@
 
 ## M4 — Macros end-to-end
 
-- [ ] T10: Macro orchestrator: bind device/visual triggers to macro actions (sequences, delays, loops, conditionals), dry-run mode, JSONL execution log under logs/, example YAML macro
-- [ ] T11: Python escape hatch: macro scripts as Python modules with a small API
-- [ ] T12: Recording & replay: capture evdev events into a recorded macro, replay through the orchestrator (timing, speed factor, loop)
+- [x] T10: Macro orchestrator: step-tree execution (action/if/while/set), dry-run mode, JSONL execution log, repeat replay; MacroRunner binds macro triggers to device events; examples/volume.yaml E2E-tested
+- [x] T11: Python escape hatch: MacroBuilder API + load_python_macro; build(m) convention, stem default name, schema validated at build(); load_macros picks up *.py alongside YAML
+- [x] T12: Recording & replay: Recorder converts evdev events -> macro (tap/hold inferred from gaps, motion accumulation, click, speed factor); dump_macro YAML round-trip; drag recordings fail loudly (not expressible)
 - [ ] T13: CLI polish: full surface (`macros list/validate/run`, `devices`, `capture`, `analyze`, `record`), `--json` outputs
 
 ## M5 — GUI

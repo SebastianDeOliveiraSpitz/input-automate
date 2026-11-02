@@ -21,7 +21,13 @@ from pydantic import ValidationError
 from input_automation.macros.models import Macro
 from input_automation.macros.script import MacroBuilder
 
-__all__ = ["LoadError", "load_macro", "load_macros", "load_python_macro"]
+__all__ = [
+    "LoadError",
+    "dump_macro",
+    "load_macro",
+    "load_macros",
+    "load_python_macro",
+]
 
 
 class LoadError(Exception):
@@ -66,6 +72,18 @@ def load_python_macro(path: Path) -> Macro:
         raise LoadError(f"{path.name}: invalid macro: {exc}") from exc
     except Exception as exc:
         raise LoadError(f"{path.name}: error in build(): {exc}") from exc
+
+
+def dump_macro(macro: Macro, path: Path) -> None:
+    """Save a macro back to YAML (round-trips through :func:`load_macro`)."""
+    # mode="json" converts enum members (TriggerKind, StepKind) to plain
+    # strings that yaml.safe_dump can represent.
+    data = macro.model_dump(by_alias=True, exclude_none=True, mode="json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
 
 
 def load_macros(directory: Path) -> Iterator[tuple[Path, Macro]]:

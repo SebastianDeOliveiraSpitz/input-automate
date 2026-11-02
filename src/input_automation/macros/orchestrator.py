@@ -81,15 +81,18 @@ class MacroOrchestrator:
 
     # -- public API ------------------------------------------------------------
 
-    def run(self, macro: Macro) -> None:
-        """Execute the macro's steps with a fresh variable scope."""
+    def run(self, macro: Macro, repeat: int = 1) -> None:
+        """Execute the macro's steps, ``repeat`` times, with a fresh scope."""
+        if repeat < 1:
+            raise ValueError("repeat must be >= 1")
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
             self._log_fh = self._log_path.open("a", encoding="utf-8")
         status = "ok"
         try:
-            self._log({"event": "start", "macro": macro.name})
-            self._execute_steps(macro.steps, scope={})
+            self._log({"event": "start", "macro": macro.name, "repeat": repeat})
+            for _ in range(repeat):
+                self._execute_steps(macro.steps, scope={})
         except Exception as exc:  # noqa: BLE001 - logged then re-raised
             status = "error"
             self._log({"event": "error", "macro": macro.name, "error": repr(exc)})
