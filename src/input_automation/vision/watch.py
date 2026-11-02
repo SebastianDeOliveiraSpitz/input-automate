@@ -13,15 +13,16 @@ Headless-testable: the clock is injectable.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Literal, Tuple
+from typing import Any, Literal
 
 import cv2
 import numpy as np
 
 __all__ = ["WatchRule", "VisualTriggerEngine"]
 
-Region = Tuple[int, int, int, int]  # (x, y, w, h)
+Region = tuple[int, int, int, int]  # (x, y, w, h)
 Clock = Callable[[], float]
 TriggerCallback = Callable[[str], None]
 
@@ -41,7 +42,7 @@ class WatchRule:
     name: str
     region: Region
     kind: WatchKind
-    params: Dict[str, Any]
+    params: dict[str, Any]
     threshold: float
     debounce_ms: float = 0.0  # suppress re-fires within this window (0 = off)
 
@@ -60,7 +61,7 @@ class WatchRule:
         if total == 0:
             return False
         fraction = mask.sum() / (255.0 * total)
-        return fraction >= self.threshold
+        return bool(fraction >= self.threshold)
 
 
 @dataclass
@@ -68,10 +69,10 @@ class VisualTriggerEngine:
     """Evaluate :class:`WatchRule`s on frames and fire rising-edge triggers."""
 
     clock: Clock = field(default=time.time)
-    rules: Dict[str, WatchRule] = field(default_factory=dict)
-    callbacks: Dict[str, TriggerCallback] = field(default_factory=dict)
-    _active: Dict[str, bool] = field(default_factory=dict)
-    _last_fire: Dict[str, float] = field(default_factory=dict)
+    rules: dict[str, WatchRule] = field(default_factory=dict)
+    callbacks: dict[str, TriggerCallback] = field(default_factory=dict)
+    _active: dict[str, bool] = field(default_factory=dict)
+    _last_fire: dict[str, float] = field(default_factory=dict)
 
     def watch(self, rule: WatchRule, callback: TriggerCallback) -> None:
         """Register a rule and the callback to fire on its rising edge."""

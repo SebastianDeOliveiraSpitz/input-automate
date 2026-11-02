@@ -1,7 +1,6 @@
 """Tests for the visual trigger engine: watch rules on frames, headless."""
 
 import numpy as np
-import pytest
 
 from input_automation.vision.watch import (
     VisualTriggerEngine,
