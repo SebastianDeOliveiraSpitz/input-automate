@@ -54,3 +54,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = "uinput"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["gi", "gi.repository", "gi.repository.*"]
+ignore_missing_imports = true

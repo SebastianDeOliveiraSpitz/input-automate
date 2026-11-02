@@ -14,7 +14,11 @@ from typing import Protocol
 
 import numpy as np
 
-__all__ = ["CaptureBackend", "Frame"]
+__all__ = ["CaptureBackend", "CaptureError", "Frame"]
+
+
+class CaptureError(Exception):
+    """Screen capture could not be started or delivered frames."""
 
 
 @dataclass(frozen=True)
