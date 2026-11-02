@@ -10,7 +10,7 @@
 
 - [x] T4: Device listener: evdev event loop, normalized event model (key/mouse/axis), CLI `monitor`
 - [x] T5: Virtual output device: uinput wrapper (move/click/scroll/keys), udev rule + permission check, CLI `test-output`
-- [ ] T6: Trigger engine: event pattern matching (sequences, holds, combos) wired to macro defs, synthetic-event tests
+- [x] T6: Trigger engine: event pattern matching (sequences, holds, combos) wired to macro defs, synthetic-event tests
 
 ## M3 — Visual layer
 
