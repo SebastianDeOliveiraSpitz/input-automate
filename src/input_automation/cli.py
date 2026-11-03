@@ -33,6 +33,8 @@ from input_automation.vision.primitives import (
     template_match,
 )
 
+DAEMON_MACRO_DIR = Path.home() / ".config" / "input-automate" / "macros"
+
 app = typer.Typer(help="Automate inputs on Linux (Wayland).")
 macros_app = typer.Typer(help="List, validate, and run macros.")
 app.add_typer(macros_app, name="macros")
@@ -413,6 +415,24 @@ def gui() -> None:
     from input_automation.gui import run
 
     run()
+
+
+@app.command()
+def daemon(
+    macro_dir: Annotated[
+        Path, typer.Option("--macro-dir", help="Directory of macros to arm.")
+    ] = DAEMON_MACRO_DIR,
+) -> None:
+    """Run the always-on macro daemon: fire macros from device triggers.
+
+    Arms every macro in --macro-dir (OR-combined triggers per macro) and
+    listens to all input devices until interrupted. Hot-reloads macro
+    files every few seconds. Runs as your user — no sudo (it needs the
+    'input' group and /dev/uinput access, both from system-setup.sh).
+    """
+    from input_automation.daemon import run_daemon
+
+    run_daemon(macro_dir)
 
 
 def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> None:

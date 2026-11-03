@@ -62,6 +62,7 @@ class MacroRunner:
                 codes=(code,),
                 kind="tap",
                 state=trigger.state,
+                device=trigger.device,
             )
             self._engine.register(binding, self._make_callback(macro.name))
 

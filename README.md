@@ -91,6 +91,7 @@ input-automation record -o my-macro.yaml     # record input; F10 stops recording
 input-automation macros list [dir]           # macros in a directory (--json)
 input-automation macros validate file.yaml   # schema check
 input-automation macros run file.yaml [--repeat N] [--dry-run]
+input-automation daemon                      # ALWAYS-ON: fire macros from triggers
 input-automation capture -o shot.png         # one screen frame (backend: mock/mutter/portal)
 input-automation analyze shot.png --color 0,0,255 [--region x,y,w,h] [--bar]
 input-automation analyze shot.png --template icon.png
@@ -102,6 +103,33 @@ the location and similarity score of a template image. All commands accept
 `--json` where useful. Capturing the real screen needs a GNOME Wayland
 session (`--backend mutter` works unattended; `--backend portal` shows the
 standard GNOME share dialog); `--backend mock` works everywhere.
+
+### The daemon: triggers that fire automatically
+
+```bash
+input-automation daemon      # foreground; Ctrl+C stops
+```
+
+The daemon arms **every macro** in `~/.config/input-automate/macros/` and
+watches all input devices: when any macro's trigger matches a device event
+(triggers within a macro are OR-combined; a trigger's `device:` field
+restricts it to that device), the macro's full step tree runs. Macro files
+are hot-reloaded every 2 seconds — edit or add macros while it runs, no
+restart needed. Every firing is logged to
+`~/.config/input-automate/logs/executions.jsonl`.
+
+For an always-on setup, install the systemd user unit (ships with
+`system-setup.sh`) and enable it:
+
+```bash
+sudo ./install/system-setup.sh          # installs the unit (idempotent)
+systemctl --user enable --now input-automation-daemon
+journalctl --user -u input-automation-daemon -f
+```
+
+Note: triggers are additive — the daemon does **not** grab or consume your
+keystrokes. Pressing the trigger key still sends that key to the focused
+application *and* fires the macro (key remapping is a different feature).
 
 ### Recording
 

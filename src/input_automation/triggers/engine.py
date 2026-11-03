@@ -35,6 +35,7 @@ class Binding:
     codes: tuple[int, ...]
     kind: BindingKind = "tap"
     state: Literal["down", "up"] = "down"
+    device: str = "any"  # evdev path restriction; "any" = all devices
     hold_ms: int = 500
     window_ms: int = 500
 
@@ -116,6 +117,8 @@ class TriggerEngine:
             self._held.discard(event.code)
         for name, items in list(self._bindings.items()):
             for idx, (binding, callback) in enumerate(items):
+                if binding.device != "any" and event.path != binding.device:
+                    continue  # binding is restricted to another device
                 if binding.kind == "tap":
                     self._check_tap(name, binding, callback, event)
                 elif binding.kind == "combo":

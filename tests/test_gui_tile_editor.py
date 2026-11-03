@@ -298,9 +298,9 @@ class TestFedoraFeedbackRegressions:
             )
         ]
         choices = win._device_choices()
-        assert choices[0] == ("any", "any device")
+        assert choices[0] == ("any device", "any")
         # display carries the NAME, stored value stays the path
-        assert choices[1] == ("/dev/input/event3", "AT Keyboard (/dev/input/event3)")
+        assert choices[1] == ("AT Keyboard (/dev/input/event3)", "/dev/input/event3")
 
     def test_trigger_edit_on_empty_steps_keeps_macro(self, editor) -> None:  # type: ignore[no-untyped-def]
         win, _file, _dir = editor

@@ -817,16 +817,16 @@ class TileEditorWindow(QMainWindow):
         self._config_layout.addWidget(form)
 
     def _device_choices(self) -> list[tuple[str, str]]:
-        """(stored value, display) pairs; display shows the device NAME.
+        """(display, stored value) pairs; the display shows the device NAME.
 
         Users cannot tell devices apart by event numbers — the combo shows
         ``"<name> (<path>)"`` while the stored value stays the path.
         """
-        choices: list[tuple[str, str]] = [("any", "any device")]
+        choices: list[tuple[str, str]] = [("any device", "any")]
         # device list is best-effort here: an empty combo still allows "any"
         with contextlib.suppress(Exception):
             for device in list(self._device_provider()):
-                choices.append((device.path, f"{device.name} ({device.path})"))
+                choices.append((f"{device.name} ({device.path})", device.path))
         return choices
 
     def _stale_panel(self, item: QTreeWidgetItem) -> bool:
