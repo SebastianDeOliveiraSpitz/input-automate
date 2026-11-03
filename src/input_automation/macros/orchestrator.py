@@ -31,9 +31,31 @@ from input_automation.macros.models import (
     WhileStep,
 )
 
-__all__ = ["MacroOrchestrator", "OutputSink"]
+__all__ = ["MacroOrchestrator", "NullSink", "OutputSink"]
 
 _BUTTON_NAMES = {1: "left", 2: "middle", 3: "right"}
+
+
+class NullSink:
+    """No-op output sink for dry runs (the orchestrator never touches it)."""
+
+    def key_tap(self, code: int) -> None:
+        del code
+
+    def key_press(self, code: int) -> None:
+        del code
+
+    def key_release(self, code: int) -> None:
+        del code
+
+    def mouse_move(self, dx: int, dy: int) -> None:
+        del dx, dy
+
+    def mouse_click(self, button: str) -> None:
+        del button
+
+    def scroll(self, dy: int) -> None:
+        del dy
 
 
 class OutputSink(Protocol):

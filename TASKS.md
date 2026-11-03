@@ -28,6 +28,6 @@
 
 ## M5 — GUI
 
-- [ ] T14: PySide6 app shell: main window, tray, device/macro lists (pytest-qt testable)
+- [x] T14: PySide6 app shell: main window, tray, device/macro lists (pytest-qt testable) — MainWindow with injectable providers, NullSink moved to orchestrator, CLI `gui` command; default macro dir ~/.config/input-automate/macros
 - [ ] T15: Macro editor: YAML ↔ form editor, visual region picker on live frames, test-run button
 - [ ] T16: Packaging + docs: README, udev rule install script, desktop entry, usage docs

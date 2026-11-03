@@ -19,7 +19,7 @@ from input_automation.macros.loader import (
     load_macro,
     load_python_macro,
 )
-from input_automation.macros.orchestrator import MacroOrchestrator
+from input_automation.macros.orchestrator import MacroOrchestrator, NullSink
 from input_automation.output.virtual import (
     RecordingBackend,
     VirtualDevice,
@@ -156,28 +156,6 @@ _DEFAULT_MACRO_DIR = Path("macros")
 _DEFAULT_SCREENSHOT = Path("screenshot.png")
 
 
-class _NullSink:
-    """No-op output sink for --dry-run (orchestrator never touches it)."""
-
-    def key_tap(self, code: int) -> None:
-        del code
-
-    def key_press(self, code: int) -> None:
-        del code
-
-    def key_release(self, code: int) -> None:
-        del code
-
-    def mouse_move(self, dx: int, dy: int) -> None:
-        del dx, dy
-
-    def mouse_click(self, button: str) -> None:
-        del button
-
-    def scroll(self, dy: int) -> None:
-        del dy
-
-
 def _load_macro_by_suffix(path: Path) -> Any:
     """Dispatch to the YAML or Python macro loader by file suffix."""
     if path.suffix in (".yaml", ".yml"):
@@ -296,7 +274,7 @@ def macros_run(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from None
     if dry_run:
-        orchestrator = MacroOrchestrator(sink=_NullSink(), dry_run=True)
+        orchestrator = MacroOrchestrator(sink=NullSink(), dry_run=True)
         orchestrator.run(macro, repeat=repeat)
         typer.echo(f"dry run: {macro.name} executed without injecting")
         return
@@ -426,6 +404,14 @@ def analyze(
         if json_output
         else f"template: ({match.x}, {match.y}) score={match.score:.4f}"
     )
+
+
+@app.command()
+def gui() -> None:
+    """Open the PySide6 desktop GUI."""
+    from input_automation.gui import run
+
+    run()
 
 
 def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> None:
