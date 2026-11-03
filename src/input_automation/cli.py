@@ -13,6 +13,7 @@ from input_automation import __version__
 from input_automation.capture.factory import BACKEND_NAMES, create_backend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
+from input_automation.macros import record_cli
 from input_automation.macros.loader import (
     LoadError,
     load_macro,
@@ -233,6 +234,47 @@ def macros_validate(
     except (LoadError, FileNotFoundError) as exc:
         typer.echo(f"{path.name}: invalid macro: {exc}", err=True)
         raise typer.Exit(1) from None
+
+
+@app.command()
+def record(
+    output: Annotated[Path, typer.Option("--output", "-o", help="YAML file to write.")],
+    from_events: Annotated[
+        Path | None,
+        typer.Option(
+            help="Convert a JSONL event dump (e.g. from `monitor --json`)"
+            " instead of recording live."
+        ),
+    ] = None,
+    trigger: str = typer.Option("F10", help="Key that stops a live recording (e.g. F10)."),
+    speed: float = typer.Option(1.0, min=0.1, help="Playback speed factor."),
+    min_gap_ms: int = typer.Option(50, min=1, help="Hold threshold in ms."),
+    device: Annotated[
+        list[str] | None, typer.Option(help="Device paths to record from (default: all).")
+    ] = None,
+    duration: float | None = typer.Option(
+        None, min=0.1, help="Stop recording after N seconds."
+    ),
+) -> None:
+    """Record input events into a replayable macro YAML file.
+
+    Press the --trigger key to stop a live recording. Use --from-events to
+    convert a previously captured JSONL event dump instead of a live device.
+    """
+    try:
+        macro = record_cli.record_macro(
+            output=output,
+            from_events=from_events,
+            trigger=trigger,
+            speed=speed,
+            min_gap_ms=min_gap_ms,
+            devices=device,
+            duration=duration,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"recorded {macro.name} -> {output} ({len(macro.steps)} steps)")
 
 
 @macros_app.command("run")
