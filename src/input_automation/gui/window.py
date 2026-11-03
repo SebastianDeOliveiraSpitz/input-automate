@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from input_automation.capture.base import CaptureBackend
 from input_automation.capture.factory import create_backend
 from input_automation.devices.discovery import DeviceInfo, list_devices
 from input_automation.gui.editor import MacroEditorDialog, new_macro_template
@@ -189,7 +190,11 @@ class MainWindow(QMainWindow):
 
     def _open_region_picker(self) -> None:
         """Pick a screen region on live frames; copy x,y,w,h to the clipboard."""
-        backend = create_backend("mock")
+        try:
+            backend = self._start_capture_backend()
+        except Exception as exc:  # noqa: BLE001 - shown, not raised
+            self.statusBar().showMessage(f"no capture backend available: {exc!r}")
+            return
         picker = RegionPickerDialog(backend=backend, parent=self)
         picker.exec()
         if picker.region is not None:
@@ -200,6 +205,21 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage("Region picking cancelled.")
+
+    def _start_capture_backend(self) -> CaptureBackend:
+        """Start a capture backend: real screen first, mock as fallback.
+
+        The backend is left running — :class:`RegionPickerDialog` skips a
+        redundant start and stops it when the dialog closes.
+        """
+        for name in ("mutter", "mock"):
+            backend = create_backend(name)
+            try:
+                backend.start()
+            except Exception:  # noqa: BLE001 - try the next backend
+                continue
+            return backend
+        raise RuntimeError("mutter and mock backends both failed to start")
 
     # -- tray ----------------------------------------------------------------
 

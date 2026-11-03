@@ -12,6 +12,7 @@ Headless-testable: frames come from an injectable ``get_frame`` callable
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 
 import numpy as np
@@ -164,7 +165,9 @@ class RegionPickerDialog(QDialog):
         self._canvas.on_release = self._update_info
 
         if backend is not None:
-            backend.start()
+            # already running — the caller started it to validate it
+            with contextlib.suppress(RuntimeError):
+                backend.start()
             self._timer = QTimer(self)
             self._timer.setInterval(_REFRESH_MS)
             self._timer.timeout.connect(self._refresh_frame)
