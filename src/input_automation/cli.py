@@ -25,6 +25,12 @@ from input_automation.output.virtual import (
     VirtualDevice,
     uinput_available,
 )
+from input_automation.vision.primitives import (
+    bar_fill_fraction,
+    color_fraction,
+    region_crop,
+    template_match,
+)
 
 app = typer.Typer(help="Automate inputs on Linux (Wayland).")
 macros_app = typer.Typer(help="List, validate, and run macros.")
@@ -304,6 +310,122 @@ def macros_run(
         orchestrator = MacroOrchestrator(sink=device)
         orchestrator.run(macro, repeat=repeat)
     typer.echo(f"ran {macro.name} x{repeat}")
+
+
+def _parse_color(spec: str) -> tuple[int, int, int]:
+    """Parse a ``B,G,R`` color string into a BGR triple."""
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) != 3 or not all(p.lstrip("-").isdigit() for p in parts):
+        raise ValueError(f"color must be B,G,R integers, got {spec!r}")
+    values = tuple(int(p) for p in parts)
+    if not all(0 <= v <= 255 for v in values):
+        raise ValueError(f"color channels must be 0-255, got {spec!r}")
+    return values[0], values[1], values[2]
+
+
+def _bgr_range(
+    bgr: tuple[int, int, int], tolerance: int
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """Clamp a BGR color +/- per-channel tolerance into an inclusive range."""
+    lower = (
+        max(0, bgr[0] - tolerance),
+        max(0, bgr[1] - tolerance),
+        max(0, bgr[2] - tolerance),
+    )
+    upper = (
+        min(255, bgr[0] + tolerance),
+        min(255, bgr[1] + tolerance),
+        min(255, bgr[2] + tolerance),
+    )
+    return lower, upper
+
+
+def _parse_region(spec: str) -> tuple[int, int, int, int] | None:
+    """Parse an ``x,y,w,h`` region string; empty means the whole image."""
+    if not spec.strip():
+        return None
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) != 4 or not all(p.lstrip("-").isdigit() for p in parts):
+        raise ValueError(f"region must be x,y,w,h integers, got {spec!r}")
+    return (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+
+
+@app.command()
+def analyze(
+    image: Annotated[Path, typer.Argument(help="Image file to analyze (BGR).")],
+    region: str = typer.Option("", help="Restrict analysis to x,y,w,h."),
+    color: str = typer.Option("", help="BGR color to measure (B,G,R)."),
+    tolerance: int = typer.Option(
+        25, min=0, help="Per-channel tolerance around --color."
+    ),
+    bar: bool = typer.Option(
+        False,
+        help="With --color: report a horizontal bar's fill fraction"
+        " instead of the pixel fraction.",
+    ),
+    template: Annotated[
+        Path | None,
+        typer.Option(help="Locate this template image instead of measuring a color."),
+    ] = None,
+    json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+) -> None:
+    """Analyze an image: color fraction, bar fill, or template location."""
+    if color and template is not None:
+        typer.echo("error: --color and --template are mutually exclusive", err=True)
+        raise typer.Exit(2)
+    if not color and template is None:
+        typer.echo("error: give --color or --template", err=True)
+        raise typer.Exit(2)
+    try:
+        region_box = _parse_region(region)
+        lower_upper: tuple[tuple[int, int, int], tuple[int, int, int]] | None = None
+        if color:
+            lower_upper = _bgr_range(_parse_color(color), tolerance)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    source = cv2.imread(str(image), cv2.IMREAD_COLOR)
+    if source is None:
+        typer.echo(f"error: could not read {image}", err=True)
+        raise typer.Exit(1)
+
+    result: dict[str, object]
+    if lower_upper is not None:
+        target = (
+            region_crop(source, *region_box)
+            if region_box is not None
+            else source
+        )
+        value = (
+            bar_fill_fraction(target, *lower_upper)
+            if bar
+            else color_fraction(target, *lower_upper)
+        )
+        mode = "bar" if bar else "color"
+        result = {
+            "mode": mode,
+            "fraction": round(value, 4),
+            "color": color,
+            "region": list(region_box) if region_box else None,
+        }
+        typer.echo(json.dumps(result) if json_output else f"{mode}: {value:.4f}")
+        return
+    assert template is not None
+    needle = cv2.imread(str(template), cv2.IMREAD_COLOR)
+    if needle is None:
+        typer.echo(f"error: could not read template {template}", err=True)
+        raise typer.Exit(1)
+    try:
+        match = template_match(source, needle)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    result = {"mode": "template", "x": match.x, "y": match.y, "score": round(match.score, 4)}
+    typer.echo(
+        json.dumps(result)
+        if json_output
+        else f"template: ({match.x}, {match.y}) score={match.score:.4f}"
+    )
 
 
 def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> None:
