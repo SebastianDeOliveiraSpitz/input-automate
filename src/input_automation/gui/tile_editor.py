@@ -75,6 +75,7 @@ from input_automation.macros.models import (
     WhileStep,
 )
 from input_automation.macros.orchestrator import MacroOrchestrator, NullSink
+from input_automation.output.virtual import VirtualDevice, uinput_available
 
 __all__ = ["DevicesDialog", "TileEditorWindow", "run", "DEFAULT_MACRO_DIR", "TILE_MIME"]
 
@@ -317,6 +318,11 @@ class TileEditorWindow(QMainWindow):
         self._new_btn = QPushButton("New")
         self._save_btn = QPushButton("Save")
         self._test_btn = QPushButton("Test run (dry)")
+        self._run_btn = QPushButton("Run (real)")
+        self._run_btn.setToolTip(
+            "Execute the macro through a virtual uinput device NOW —"
+            " the injection goes to whatever window has keyboard focus."
+        )
         self._yaml_btn = QPushButton("YAML editor")
         self._devices_btn = QPushButton("Devices")
         self._region_btn = QPushButton("Pick region")
@@ -325,6 +331,7 @@ class TileEditorWindow(QMainWindow):
             self._new_btn,
             self._save_btn,
             self._test_btn,
+            self._run_btn,
             self._yaml_btn,
             self._devices_btn,
             self._region_btn,
@@ -363,6 +370,7 @@ class TileEditorWindow(QMainWindow):
         self._new_btn.clicked.connect(self._new_macro)
         self._save_btn.clicked.connect(self._save_macro)
         self._test_btn.clicked.connect(self._test_run)
+        self._run_btn.clicked.connect(self._real_run)
         self._yaml_btn.clicked.connect(self._open_yaml_editor)
         self._devices_btn.clicked.connect(self._open_devices)
         self._region_btn.clicked.connect(self._open_region_picker)
@@ -904,6 +912,30 @@ class TileEditorWindow(QMainWindow):
             return
         self.statusBar().showMessage(
             f"{self._macro.name}: dry run ok ({len(self._macro.steps)} steps)"
+        )
+
+    def _real_run(self) -> None:
+        """Execute the macro NOW through a virtual uinput device (real injection).
+
+        No sudo involved: /dev/uinput is writable by the 'input' group
+        (system-setup.sh). The injected events land in whatever window
+        currently has keyboard focus.
+        """
+        if self._macro is None:
+            self.statusBar().showMessage("Nothing to run.")
+            return
+        ok, hint = uinput_available()
+        if not ok:
+            self.statusBar().showMessage(f"error: {hint}")
+            return
+        try:
+            with VirtualDevice() as device:
+                MacroOrchestrator(sink=device).run(self._macro)
+        except Exception as exc:  # noqa: BLE001 - shown, not raised
+            self.statusBar().showMessage(f"{self._macro.name}: error: {exc!r}")
+            return
+        self.statusBar().showMessage(
+            f"{self._macro.name}: ran for real ({len(self._macro.steps)} steps)"
         )
 
     def _open_yaml_editor(self) -> None:

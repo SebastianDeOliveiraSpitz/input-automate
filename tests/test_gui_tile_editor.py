@@ -232,6 +232,58 @@ class TestPersistence:
         assert b["condition"]["value"] == 10
 
 
+class TestRealRun:
+    def test_real_run_without_uinput_shows_hint(self, editor, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        import input_automation.gui.tile_editor as te
+
+        monkeypatch.setattr(te, "uinput_available", lambda: (False, "/dev/uinput is not writable"))
+        win, _file, _dir = editor
+        win._real_run()
+        assert "not writable" in win.statusBar().currentMessage()
+
+    def test_real_run_executes_through_virtual_device(
+        self, editor, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        import input_automation.gui.tile_editor as te
+
+        emitted: list[int] = []
+
+        class FakeVirtualDevice:
+            def __init__(self, sink_backend: object = None) -> None:
+                del sink_backend  # the real VirtualDevice takes an optional backend
+
+            def __enter__(self) -> "FakeVirtualDevice":
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def key_tap(self, code: int) -> None:
+                emitted.append(code)
+
+            def key_press(self, code: int) -> None:
+                del code
+
+            def key_release(self, code: int) -> None:
+                del code
+
+            def mouse_move(self, dx: int, dy: int) -> None:
+                del dx, dy
+
+            def mouse_click(self, button: str) -> None:
+                del button
+
+            def scroll(self, dy: int) -> None:
+                del dy
+
+        monkeypatch.setattr(te, "uinput_available", lambda: (True, ""))
+        monkeypatch.setattr(te, "VirtualDevice", FakeVirtualDevice)
+        win, _file, _dir = editor
+        win._real_run()
+        assert "ran for real" in win.statusBar().currentMessage()
+        assert emitted  # the tap really went through the (virtual) device
+
+
 class TestFedoraFeedbackRegressions:
     """Regressions from real fedora1 GUI testing (2026-11-03)."""
 

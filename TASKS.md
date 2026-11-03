@@ -43,3 +43,10 @@ would buy nothing. Tile taxonomy maps 1:1 onto the existing schema
 - [x] T17: Tile outline editor: the app's main window opens on the tile tree — palette (Input/Logic/Timer/Output) with drag & drop (custom MIME) + double-click insert; QTreeWidget with Triggers/Steps section rows, if/while rendered with then/else/body branch rows, internal-move reordering + nesting, invalid mutations revert to the last good macro; inline config panel per tile (input tiles: device combo + key code + state); live YAML preview; Save (name follows file stem), Test run (dry), macro file combo, Devices dialog (moved off the main window), Pick region, YAML editor retained for power users; pytest-qt offscreen testable (test_gui_tile_editor.py)
 - [ ] T18 (optional, after dogfooding): Flowchart view of the same model — auto-laid-out tile graph on QGraphicsScene (top-down, if-branches fan out, edges computed, never hand-routed). Only if the outline view proves insufficient in real use.
 - Explicitly rejected: manual node-graph with free tile placement and wire dragging (high effort, wrong fit for control flow).
+
+## M7 — Always-on macro daemon
+
+The trigger bindings are currently only stored; nothing listens to devices
+between manual runs. Basti wants triggers to actually fire macros.
+
+- [ ] T19: Always-on macro daemon: DeviceListener + MacroRunner (both built in T4/T10) wired into a long-running process that arms every macro in ~/.config/input-automate/macros (triggers are OR-combined per macro; any firing macro executes its full step tree), hot-reload on macro file changes, systemd user unit (AGENTS.md deployment), GUI shows armed/stopped state.
