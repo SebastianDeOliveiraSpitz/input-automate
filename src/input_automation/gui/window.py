@@ -25,8 +25,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from input_automation.capture.factory import create_backend
 from input_automation.devices.discovery import DeviceInfo, list_devices
-from input_automation.macros.loader import load_macros
+from input_automation.gui.editor import MacroEditorDialog, new_macro_template
+from input_automation.gui.region_picker import RegionPickerDialog
+from input_automation.macros.loader import LoadError, load_macro, load_macros
 from input_automation.macros.models import Macro
 from input_automation.macros.orchestrator import MacroOrchestrator, NullSink
 
@@ -60,6 +63,7 @@ class MainWindow(QMainWindow):
         self._macro_provider = macro_provider or _default_macro_provider
         self._macro_dir = macro_dir
         self._macros: dict[str, Macro] = {}
+        self._macro_paths: dict[str, Path] = {}
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -69,7 +73,15 @@ class MainWindow(QMainWindow):
         self._refresh_devices = QPushButton("Refresh devices")
         self._refresh_macros = QPushButton("Refresh macros")
         self._test_run = QPushButton("Test run (dry)")
-        for btn in (self._refresh_devices, self._refresh_macros, self._test_run):
+        self._new_macro = QPushButton("New macro")
+        self._pick_region = QPushButton("Pick region")
+        for btn in (
+            self._refresh_devices,
+            self._refresh_macros,
+            self._test_run,
+            self._new_macro,
+            self._pick_region,
+        ):
             buttons.addWidget(btn)
         layout.addWidget(QLabel("Devices"))
         layout.addWidget(self._device_list)
@@ -81,6 +93,9 @@ class MainWindow(QMainWindow):
         self._refresh_devices.clicked.connect(self.refresh_devices)
         self._refresh_macros.clicked.connect(self.refresh_macros)
         self._test_run.clicked.connect(self.test_run_selected)
+        self._new_macro.clicked.connect(self._open_new_macro)
+        self._pick_region.clicked.connect(self._open_region_picker)
+        self._macro_list.itemDoubleClicked.connect(self._edit_macro)
         self.statusBar().showMessage(
             "  |  ".join(m for m in (self._load_devices(), self._load_macros()))
         )
@@ -105,12 +120,14 @@ class MainWindow(QMainWindow):
         """Fill the macro list; returns a status message."""
         self._macro_list.clear()
         self._macros.clear()
+        self._macro_paths.clear()
         try:
             entries = list(self._macro_provider(self._macro_dir))
         except Exception as exc:  # noqa: BLE001 - surfaced in the status bar
             return f"macro refresh failed: {exc!r}"
         for path, macro in entries:
             self._macros[path.name] = macro
+            self._macro_paths[path.name] = path
             self._macro_list.addItem(f"{macro.name}  ({path.name})")
         return f"{len(entries)} macro(s)"
 
@@ -139,6 +156,50 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{macro.name}: dry run ok ({len(macro.steps)} steps)"
         )
+
+    # -- editor / region picker ----------------------------------------------
+
+    def _edit_macro(self, item) -> None:  # type: ignore[no-untyped-def]
+        """Open the double-clicked YAML macro in the editor dialog."""
+        stem = item.text().rsplit("(", 1)[1].strip(" )")
+        path = self._macro_paths.get(stem)
+        if path is None or path.suffix not in (".yaml", ".yml"):
+            self.statusBar().showMessage(
+                "Only YAML macros can be edited (Python macros are code)."
+            )
+            return
+        try:
+            macro = load_macro(path)
+        except LoadError as exc:
+            self.statusBar().showMessage(f"could not load {path.name}: {exc}")
+            return
+        editor = MacroEditorDialog(
+            macro=macro, path=path, default_dir=self._macro_dir, parent=self
+        )
+        editor.exec()
+        self.refresh_macros()
+
+    def _open_new_macro(self) -> None:
+        """Open the editor with a template macro; saving asks for a path."""
+        editor = MacroEditorDialog(
+            macro=new_macro_template(), default_dir=self._macro_dir, parent=self
+        )
+        editor.exec()
+        self.refresh_macros()
+
+    def _open_region_picker(self) -> None:
+        """Pick a screen region on live frames; copy x,y,w,h to the clipboard."""
+        backend = create_backend("mock")
+        picker = RegionPickerDialog(backend=backend, parent=self)
+        picker.exec()
+        if picker.region is not None:
+            x, y, w, h = picker.region
+            QApplication.clipboard().setText(f"{x},{y},{w},{h}")
+            self.statusBar().showMessage(
+                f"Region {x},{y},{w},{h} copied (analyze --region / watch rules)."
+            )
+        else:
+            self.statusBar().showMessage("Region picking cancelled.")
 
     # -- tray ----------------------------------------------------------------
 

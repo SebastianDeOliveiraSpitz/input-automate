@@ -27,6 +27,7 @@ __all__ = [
     "load_macro",
     "load_macros",
     "load_python_macro",
+    "macro_to_yaml_text",
 ]
 
 
@@ -74,16 +75,18 @@ def load_python_macro(path: Path) -> Macro:
         raise LoadError(f"{path.name}: error in build(): {exc}") from exc
 
 
-def dump_macro(macro: Macro, path: Path) -> None:
-    """Save a macro back to YAML (round-trips through :func:`load_macro`)."""
+def macro_to_yaml_text(macro: Macro) -> str:
+    """Serialize a macro to YAML text (round-trips through :func:`load_macro`)."""
     # mode="json" converts enum members (TriggerKind, StepKind) to plain
     # strings that yaml.safe_dump can represent.
     data = macro.model_dump(by_alias=True, exclude_none=True, mode="json")
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
+def dump_macro(macro: Macro, path: Path) -> None:
+    """Save a macro back to YAML (round-trips through :func:`load_macro`)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    path.write_text(macro_to_yaml_text(macro), encoding="utf-8")
 
 
 def load_macros(directory: Path) -> Iterator[tuple[Path, Macro]]:

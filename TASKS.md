@@ -29,5 +29,5 @@
 ## M5 — GUI
 
 - [x] T14: PySide6 app shell: main window, tray, device/macro lists (pytest-qt testable) — MainWindow with injectable providers, NullSink moved to orchestrator, CLI `gui` command; default macro dir ~/.config/input-automate/macros
-- [ ] T15: Macro editor: YAML ↔ form editor, visual region picker on live frames, test-run button
+- [x] T15: Macro editor: YAML ↔ form editor, visual region picker on live frames, test-run button — MacroEditorDialog (YAML pane is source of truth; form regenerates YAML; complex if/while/set steps locked to the YAML pane), RegionPickerDialog over any CaptureBackend (mock default) returning frame-pixel x,y,w,h to clipboard, editor Save validates + writes, Test run (dry) via NullSink; main window: double-click edits, New macro, Pick region
 - [ ] T16: Packaging + docs: README, udev rule install script, desktop entry, usage docs
