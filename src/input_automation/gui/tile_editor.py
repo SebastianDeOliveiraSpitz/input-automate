@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import shiboken6  # noqa: TID251 - ships with PySide6; used for Qt object liveness
 from PySide6.QtCore import QByteArray, QMimeData, Qt, QTimer
 from PySide6.QtGui import QAction, QDrag
 from PySide6.QtWidgets import (
@@ -300,6 +301,9 @@ class TileEditorWindow(QMainWindow):
         self._macro_dir = macro_dir
         self._macro: Macro | None = None
         self._path: Path | None = None
+        # the tree item the config panel is currently bound to; config edits
+        # against anything else are stale (their row may already be deleted)
+        self._config_item: QTreeWidgetItem | None = None
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -433,6 +437,9 @@ class TileEditorWindow(QMainWindow):
         self._build_config_panel()
 
     def _populate_tree(self, macro: Macro) -> None:
+        # the tree is rebuilt: every previously bound config widget is now
+        # stale; guard callbacks via _config_item (rows get deleted here)
+        self._config_item = None
         tree = self._tree
         tree.clear()
         triggers_root = QTreeWidgetItem(["Triggers"])
@@ -539,6 +546,14 @@ class TileEditorWindow(QMainWindow):
             self._parse_step(_tree_row(steps_root, i))
             for i in range(steps_root.childCount())
         ]
+        if not steps and self._macro is not None and self._macro.steps:
+            # A macro needs >= 1 step (schema). Editing a trigger while the
+            # step tree is still empty must not wipe/revert the macro —
+            # keep the existing steps and tell the user why.
+            steps = list(self._macro.steps)
+            self.statusBar().showMessage(
+                "A macro needs at least one step — kept the existing steps."
+            )
         return Macro(name=self._macro_name(), description=self._macro_description(),
                      triggers=triggers, steps=steps)
 
@@ -696,6 +711,7 @@ class TileEditorWindow(QMainWindow):
             if widget is not None:
                 widget.deleteLater()
         item = self._tree.currentItem()
+        self._config_item = None  # rebuilt below only for editable tiles
         if item is None:
             self._config_layout.addWidget(QLabel("Drag tiles from the palette."))
             return
@@ -705,6 +721,7 @@ class TileEditorWindow(QMainWindow):
                 QLabel(_tile_label(data) if data else "Select a tile to configure.")
             )
             return
+        self._config_item = item
 
         form = QWidget()
         layout = QHBoxLayout(form)
@@ -725,23 +742,30 @@ class TileEditorWindow(QMainWindow):
             spin.valueChanged.connect(lambda v: on_change(v))
             layout.addWidget(spin)
 
-        def combo_field(label: str, options: tuple[str, ...], value: str,
-                        on_change: Any) -> None:
+        def combo_field(label: str, options: list[tuple[str, Any]],
+                        value: Any, on_change: Any) -> None:
+            """Data-driven combo: shows ``display``, passes ``data`` on change."""
             layout.addWidget(QLabel(label))
             combo = QComboBox()
-            combo.addItems(options)
-            combo.setCurrentText(value)
-            combo.currentTextChanged.connect(lambda v: on_change(v))
+            for display, option_data in options:
+                combo.addItem(display, option_data)
+            index = combo.findData(value)
+            combo.setCurrentIndex(max(0, index))
+            combo.currentIndexChanged.connect(
+                lambda _i: on_change(combo.currentData())
+            )
             layout.addWidget(combo)
 
         if t == "trigger":
-            combo_field("kind", ("key", "button"), data["kind"],
+            combo_field("kind", [("key", "key"), ("button", "button")],
+                        data["kind"],
                         lambda v: self._update_tile(item, kind=v))
-            combo_field("device", self._device_options(), data["device"],
+            combo_field("device", self._device_choices(), data["device"],
                         lambda v: self._update_tile(item, device=v))
             text_field("code", data["code"],
                        lambda v: self._update_tile(item, code=v.upper()))
-            combo_field("state", ("down", "up"), data["state"],
+            combo_field("state", [("down", "down"), ("up", "up")],
+                        data["state"],
                         lambda v: self._update_tile(item, state=v))
         elif t == "action":
             op = data["op"]
@@ -749,8 +773,10 @@ class TileEditorWindow(QMainWindow):
                 text_field("target", data.get("target"),
                            lambda v: self._update_tile(item, target=v.upper()))
             elif op == "click":
-                combo_field("button", ("1", "2", "3"), str(data["button"]),
-                            lambda v: self._update_tile(item, button=int(v)))
+                combo_field("button",
+                            [("left", 1), ("middle", 2), ("right", 3)],
+                            data["button"],
+                            lambda v: self._update_tile(item, button=v))
             elif op in ("move", "scroll"):
                 spin_field("dx", data.get("dx") or 0,
                            lambda v: self._update_tile(item, dx=v))
@@ -760,7 +786,8 @@ class TileEditorWindow(QMainWindow):
                 spin_field("ms", data["ms"],
                            lambda v: self._update_tile(item, ms=v))
         elif t in ("if", "while"):
-            combo_field("var? op", _OPERATORS, data["condition"]["op"],
+            combo_field("condition", [(op, op) for op in _OPERATORS],
+                        data["condition"]["op"],
                         lambda v: self._update_condition(item, op=v))
             text_field("var", data["condition"]["var"],
                        lambda v: self._update_condition(item, var=v))
@@ -781,14 +808,32 @@ class TileEditorWindow(QMainWindow):
         layout.addStretch(1)
         self._config_layout.addWidget(form)
 
-    def _device_options(self) -> tuple[str, ...]:
-        options = ["any"]
+    def _device_choices(self) -> list[tuple[str, str]]:
+        """(stored value, display) pairs; display shows the device NAME.
+
+        Users cannot tell devices apart by event numbers — the combo shows
+        ``"<name> (<path>)"`` while the stored value stays the path.
+        """
+        choices: list[tuple[str, str]] = [("any", "any device")]
         # device list is best-effort here: an empty combo still allows "any"
         with contextlib.suppress(Exception):
-            options.extend(d.path for d in list(self._device_provider()))
-        return tuple(options)
+            for device in list(self._device_provider()):
+                choices.append((device.path, f"{device.name} ({device.path})"))
+        return choices
+
+    def _stale_panel(self, item: QTreeWidgetItem) -> bool:
+        """True when ``item`` is not the row this config panel is bound to.
+
+        The panel survives tree rebuilds (save/reload, reverts) — its
+        widgets then hold references to deleted QTreeWidgetItems. Guard
+        every config callback through this so a stale edit is ignored
+        instead of crashing on a dead C++ object.
+        """
+        return not shiboken6.isValid(item) or item is not self._config_item
 
     def _update_tile(self, item: QTreeWidgetItem, **changes: Any) -> None:
+        if self._stale_panel(item):
+            return  # panel was rebuilt (or its row deleted) — ignore silently
         data: dict[str, Any] = item.data(0, _TILE_DATA)
         data.update(changes)
         # item.data() returns a COPY — store the mutated dict back explicitly
@@ -797,6 +842,8 @@ class TileEditorWindow(QMainWindow):
         self._sync_from_tree()
 
     def _update_condition(self, item: QTreeWidgetItem, **changes: Any) -> None:
+        if self._stale_panel(item):
+            return  # panel was rebuilt (or its row deleted) — ignore silently
         data: dict[str, Any] = item.data(0, _TILE_DATA)
         condition: dict[str, Any] = dict(data["condition"])
         condition.update(changes)

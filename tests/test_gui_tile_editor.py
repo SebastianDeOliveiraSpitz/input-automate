@@ -10,6 +10,7 @@ import pytest  # noqa: E402
 import yaml  # noqa: E402
 from PySide6.QtWidgets import QFileDialog  # noqa: E402
 
+from input_automation.devices.discovery import DeviceInfo  # noqa: E402
 from input_automation.gui.tile_editor import (  # noqa: E402
     DevicesDialog,
     TileEditorWindow,
@@ -229,3 +230,54 @@ class TestPersistence:
         assert a is not b and a["condition"] is not b["condition"]
         a["condition"]["value"] = 99
         assert b["condition"]["value"] == 10
+
+
+class TestFedoraFeedbackRegressions:
+    """Regressions from real fedora1 GUI testing (2026-11-03)."""
+
+    def test_device_choices_show_names(self, editor) -> None:  # type: ignore[no-untyped-def]
+        win, _file, _dir = editor
+        win._device_provider = lambda: [
+            DeviceInfo(
+                path="/dev/input/event3",
+                name="AT Keyboard",
+                phys="",
+                kinds=frozenset({"keyboard"}),
+            )
+        ]
+        choices = win._device_choices()
+        assert choices[0] == ("any", "any device")
+        # display carries the NAME, stored value stays the path
+        assert choices[1] == ("/dev/input/event3", "AT Keyboard (/dev/input/event3)")
+
+    def test_trigger_edit_on_empty_steps_keeps_macro(self, editor) -> None:  # type: ignore[no-untyped-def]
+        win, _file, _dir = editor
+        win._new_macro()
+        triggers_root = _triggers_root(win)
+        win._insert_tile("trigger", None)
+        row = triggers_root.child(triggers_root.childCount() - 1)
+        win._tree.setCurrentItem(row)
+        win._update_tile(row, device="/dev/input/event3", code="F2")
+        macro = win._macro
+        assert macro is not None
+        assert macro.triggers[-1].code == "F2"
+        assert macro.triggers[-1].device == "/dev/input/event3"
+        # the template's wait step is kept — no revert, no wipe
+        assert len(macro.steps) == 1 and macro.steps[0].op == "wait"
+
+    def test_stale_config_edit_is_ignored_not_crash(self, editor) -> None:  # type: ignore[no-untyped-def]
+        win, macro_file, _dir = editor
+        win._new_macro()
+        triggers_root = _triggers_root(win)
+        win._insert_tile("trigger", None)
+        row = triggers_root.child(triggers_root.childCount() - 1)
+        win._tree.setCurrentItem(row)
+        win._update_tile(row, code="F2")
+        old_row = row
+        win._path = macro_file
+        win._save_macro()  # rebuilds the tree: old_row's C++ object is deleted
+        # the still-open config panel fires against the deleted row —
+        # previously RuntimeError: libshiboken Internal C++ object deleted
+        win._update_tile(old_row, code="F3")
+        assert win._macro is not None
+        assert win._macro.triggers[-1].code == "F2"  # untouched by stale edit
