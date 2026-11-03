@@ -23,8 +23,8 @@ best-effort. Linux only.
   analysis, template matching, progress-bar measurement
 - **Visual triggers** — fire on rising-edge color conditions inside a screen
   region, with debouncing
-- **GUI** — device/macro overview, macro editor (YAML ↔ form), visual region
-  picker on live frames, dry-run testing
+- **GUI** — tile editor (drag & drop macro building), visual region picker on
+  the real screen, dry-run testing, YAML editor for power users
 - **Python escape hatch** — plain `.py` macro files for logic the schema can't express
 
 ## Install
@@ -64,11 +64,22 @@ group), loads the `uinput` kernel module at boot, installs a udev rule making
 input-automation gui
 ```
 
-The window lists your devices and macros. Double-click a macro to edit it
-(form on the right, YAML on the left — YAML is the source of truth, the
-form follows). "Pick region" shows your live screen (GNOME/mutter backend,
+The app opens directly on the **tile editor**. The left palette offers
+Input tiles (on key press / mouse button — configurable per device and key
+in the panel below the tree), Logic tiles (if / while / set), Output tiles
+(tap, press, release, click, move, scroll) and a Timer tile (wait). Drag a
+tile onto the tree (or double-click it); `if`/`while` tiles carry `then`,
+`else` and `body` branch rows — dropping tiles onto a branch nests them.
+The tree can be reordered by dragging rows, the YAML preview on the right
+updates live (it is the source of truth), and "Save" writes it back to
+`~/.config/input-automate/macros/`.
+
+Toolbar: switch between macro files, **Test run (dry)** validates the
+current macro end-to-end without injecting anything, **YAML editor** opens
+the raw YAML ↔ form editor, **Devices** lists connected input devices, and
+**Pick region** grabs one frame of your real screen (GNOME/mutter backend,
 mock fallback) and copies the dragged rectangle as `x,y,w,h` to the
-clipboard. "Test run (dry)" validates a macro end-to-end without injecting.
+clipboard.
 
 ### CLI
 
