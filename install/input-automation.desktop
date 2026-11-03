@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=input-automation
+GenericName=Input automation
+Comment=Automate inputs on Linux (Wayland) with device- and vision-driven macros
+Exec=input-automation gui
+Icon=input-keyboard
+Terminal=false
+Categories=Utility;
+Keywords=macro;automation;input;mouse;keyboard;wayland;
+StartupNotify=true

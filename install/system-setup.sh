@@ -12,6 +12,7 @@
 #   1. Load the uinput kernel module at boot
 #   2. Install a udev rule making /dev/uinput writable by the input group
 #   3. Add the invoking user to the input group (relogin required)
+#   4. Install the GUI desktop entry for the invoking user
 
 set -euo pipefail
 
@@ -61,5 +62,17 @@ if ! id -nG "${TARGET_USER}" | grep -qw input; then
   echo "added ${TARGET_USER} to the input group — relogin required"
 fi
 
+# 4. desktop entry for the GUI (idempotent; only rewritten when it changed)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DESKTOP_SRC="${SCRIPT_DIR}/input-automation.desktop"
+APPS_DIR="$(getent passwd "${TARGET_USER}" | cut -d: -f6)/.local/share/applications"
+if [[ -f "${DESKTOP_SRC}" ]]; then
+  mkdir -p "${APPS_DIR}"
+  if ! cmp -qs "${DESKTOP_SRC}" "${APPS_DIR}/input-automation.desktop"; then
+    install -m 0644 "${DESKTOP_SRC}" "${APPS_DIR}/input-automation.desktop"
+    echo "installed ${APPS_DIR}/input-automation.desktop"
+  fi
+fi
+
 echo "system setup complete"
-echo "next step:  pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate.git@v0.1.0a1"
+echo "next step:  pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate.git@main"

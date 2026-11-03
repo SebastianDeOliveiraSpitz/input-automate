@@ -30,4 +30,16 @@
 
 - [x] T14: PySide6 app shell: main window, tray, device/macro lists (pytest-qt testable) — MainWindow with injectable providers, NullSink moved to orchestrator, CLI `gui` command; default macro dir ~/.config/input-automate/macros
 - [x] T15: Macro editor: YAML ↔ form editor, visual region picker on live frames, test-run button — MacroEditorDialog (YAML pane is source of truth; form regenerates YAML; complex if/while/set steps locked to the YAML pane), RegionPickerDialog over any CaptureBackend (mock default) returning frame-pixel x,y,w,h to clipboard, editor Save validates + writes, Test run (dry) via NullSink; main window: double-click edits, New macro, Pick region (real screen via mutter backend, mock fallback)
-- [ ] T16: Packaging + docs: README, udev rule install script, desktop entry, usage docs
+- [x] T16: Packaging + docs: README (install, CLI/GUI usage, macro YAML reference incl. schema-validated example, recording, troubleshooting, dev section), desktop entry install/input-automation.desktop installed idempotently by system-setup.sh (step 4), udev rule script pre-existing
+
+## M6 — Visual macro editor (post-v1, decided 2026-11-03)
+
+Concept decision: the declarative macro model (YAML) stays the source of truth;
+editors are generators for it. A free-form 2D node graph is out of scope —
+macros are control flow (a tree), not dataflow, so wire-routing/auto-layout
+would buy nothing. Tile taxonomy maps 1:1 onto the existing schema
+(triggers, Action, IfStep/WhileStep/SetStep, WatchRule).
+
+- [ ] T17: Tile outline editor: vertical stack of tiles (rows) with nesting = indentation; palette (Input/Logic/Timer/Output) inserts tiles; click-tile config popover; drag reorder + indent/outdent for if/while children; live YAML side pane; triggers and watch rules as flat trigger-tile rows above the step tree. Pure Qt widgets (QTreeWidget), pytest-qt offscreen testable.
+- [ ] T18 (optional, after dogfooding): Flowchart view of the same model — auto-laid-out tile graph on QGraphicsScene (top-down, if-branches fan out, edges computed, never hand-routed). Only if the outline view proves insufficient in real use.
+- Explicitly rejected: manual node-graph with free tile placement and wire dragging (high effort, wrong fit for control flow).
