@@ -10,6 +10,7 @@ import typer
 from evdev import ecodes
 
 from input_automation import __version__
+from input_automation.capture.base import CaptureError
 from input_automation.capture.factory import BACKEND_NAMES, create_backend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
@@ -418,14 +419,15 @@ def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> No
     """Grab a single frame from a capture backend and write it as PNG."""
     try:
         backend = create_backend(backend_name)
-    except ValueError as exc:
+    except (ValueError, ModuleNotFoundError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from None
     try:
-        backend.start()
-        frame = backend.grab()
-    finally:
-        backend.stop()
+        frame = backend.grab()  # manages its own start/stop lifecycle
+    except (CaptureError, RuntimeError, ModuleNotFoundError) as exc:
+        # mutter/portal need a GNOME session + system GStreamer/PyGObject
+        typer.echo(f"error: capture backend {backend_name!r} failed: {exc}", err=True)
+        raise typer.Exit(1) from None
     if not cv2.imwrite(str(output), frame.image):
         typer.echo(f"error: could not write {output}", err=True)
         raise typer.Exit(1)

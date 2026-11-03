@@ -20,6 +20,7 @@ import yaml
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from input_automation.capture.factory import grab_first_frame
 from input_automation.gui.region_picker import RegionPickerDialog
 from input_automation.macros.loader import macro_to_yaml_text
 from input_automation.macros.models import (
@@ -415,13 +417,13 @@ class MacroEditorDialog(QDialog):
     # -- actions -------------------------------------------------------------
 
     def _pick_region_clicked(self) -> None:
-        """Open the region picker; put the picked region on the clipboard."""
-        picker = RegionPickerDialog(parent=self)
+        """Grab one real-screen frame and pick a region on the fullscreen overlay."""
+        picker = RegionPickerDialog(
+            frame_loader=lambda: grab_first_frame().image, parent=self
+        )
         result = picker.exec()
         if result and picker.region is not None:
             x, y, w, h = picker.region
-            from PySide6.QtWidgets import QApplication
-
             QApplication.clipboard().setText(f"{x},{y},{w},{h}")
             self._status.setText(
                 f"Region {x},{y},{w},{h} copied to clipboard "

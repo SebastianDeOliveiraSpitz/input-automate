@@ -1,23 +1,25 @@
-"""Interactive visual region picker over live frames (T15).
+"""Fullscreen region picker over a captured screen frame (T15).
 
-The user drags a rectangle on the live frame; the picker reports the
-rectangle in *frame* pixel coordinates ``(x, y, w, h)`` — the same
-coordinate convention :class:`~input_automation.vision.watch.WatchRule`
-and the ``analyze --region`` CLI option use.
+Standard screen-region UX on Wayland: the dialog grabs ONE frame of the
+real screen (mutter screencast first, mock fallback), shows it in a
+fullscreen frameless overlay, and the user drags a rectangle on it. The
+overlay only appears *after* the frame was captured, so it can never
+photograph itself. The result is reported in *frame* pixel coordinates
+``(x, y, w, h)`` — the same convention
+:class:`~input_automation.vision.watch.WatchRule` and ``analyze --region``
+use.
 
-Headless-testable: frames come from an injectable ``get_frame`` callable
-(supply a static image in tests, or a
-:class:`~input_automation.capture.base.CaptureBackend` for live use).
+Headless-testable: pass ``frame=`` (static image) or ``frame_loader=``
+(injectable grab callable) instead of a real backend.
 """
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPaintEvent, QPixmap
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPaintEvent, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -28,14 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from input_automation.capture.base import CaptureBackend
+from input_automation.capture.factory import grab_first_frame
 
-__all__ = ["Region", "RegionPickerDialog"]
+__all__ = ["FrameCanvas", "Region", "RegionPickerDialog"]
 
 Region = tuple[int, int, int, int]  # (x, y, w, h) in frame pixels
-
-_MAX_DISPLAY_WIDTH = 800  # px; frames are scaled down to fit, if wider
-_REFRESH_MS = 150
 
 
 class FrameCanvas(QLabel):
@@ -52,8 +51,8 @@ class FrameCanvas(QLabel):
 
     # -- frame handling ------------------------------------------------------
 
-    def set_frame(self, frame: np.ndarray) -> None:
-        """Display a BGR numpy frame, scaled down if it is very wide."""
+    def set_frame(self, frame: np.ndarray, *, max_width: int | None = None) -> None:
+        """Display a BGR numpy frame, scaled down to ``max_width`` if wider."""
         height, width = frame.shape[:2]
         image = QImage(
             frame.data,
@@ -62,7 +61,7 @@ class FrameCanvas(QLabel):
             int(frame.strides[0]),
             QImage.Format.Format_BGR888,
         )
-        display_width = min(width, _MAX_DISPLAY_WIDTH)
+        display_width = width if max_width is None else min(width, max_width)
         self._scale = display_width / width
         self.setPixmap(
             QPixmap.fromImage(image).scaledToWidth(
@@ -126,37 +125,52 @@ class FrameCanvas(QLabel):
 
 
 class RegionPickerDialog(QDialog):
-    """Pick a rectangular region on live frames; result in frame pixels."""
+    """Pick a rectangular region on a captured screen frame.
+
+    Lifecycle: on show, ONE frame is grabbed (``frame_loader`` or the
+    ``frame`` argument) and displayed fullscreen; dragging a rectangle
+    selects the region in frame pixels. Esc/Cancel aborts, OK confirms.
+    """
 
     def __init__(
         self,
         *,
-        backend: CaptureBackend | None = None,
-        get_frame: Callable[[], np.ndarray | None] | None = None,
+        frame: np.ndarray | None = None,
+        frame_loader: Callable[[], np.ndarray] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Pick region")
-        self.resize(860, 640)
         self.region: Region | None = None
-        self._backend = backend
-        self._get_frame = get_frame
+        self._frame = frame
+        self._frame_loader = frame_loader
+        self._loaded = False
+
+        # Frameless fullscreen overlay showing the captured screen.
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Dialog
+        )
+        self.setModal(True)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self._canvas = FrameCanvas()
-        layout.addWidget(self._canvas)
-        self._info = QLabel("Drag a rectangle on the frame.")
-        layout.addWidget(self._info)
-        buttons = QHBoxLayout()
+        layout.addWidget(self._canvas, 1)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(8, 4, 8, 4)
+        self._info = QLabel("Drag a rectangle on the screen. Esc cancels.")
         self._copy = QPushButton("Copy x,y,w,h")
         self._ok = QPushButton("OK")
         cancel = QPushButton("Cancel")
         self._ok.setDefault(True)
-        buttons.addWidget(self._copy)
-        buttons.addStretch(1)
-        buttons.addWidget(self._ok)
-        buttons.addWidget(cancel)
-        layout.addLayout(buttons)
+        bar.addWidget(self._info, 1)
+        bar.addWidget(self._copy)
+        bar.addWidget(self._ok)
+        bar.addWidget(cancel)
+        layout.addLayout(bar)
 
         self._ok.setEnabled(False)
         self._ok.clicked.connect(self._confirm)
@@ -164,37 +178,34 @@ class RegionPickerDialog(QDialog):
         self._copy.clicked.connect(self._copy_region)
         self._canvas.on_release = self._update_info
 
-        if backend is not None:
-            # already running — the caller started it to validate it
-            with contextlib.suppress(RuntimeError):
-                backend.start()
-            self._timer = QTimer(self)
-            self._timer.setInterval(_REFRESH_MS)
-            self._timer.timeout.connect(self._refresh_frame)
-            self._timer.start()
-
     # -- frame supply --------------------------------------------------------
 
-    def _refresh_frame(self) -> None:
-        """Grab the latest frame (live backends) and show it."""
-        frame = self._next_frame()
-        if frame is not None:
-            self._canvas.set_frame(frame)
-            self._update_info()
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt naming
+        """Grab the frame once, then cover the screen with it."""
+        super().showEvent(event)
+        if not self._loaded:
+            self._loaded = True
+            self._load_frame()
 
-    def _next_frame(self) -> np.ndarray | None:
-        if self._get_frame is not None:
-            return self._get_frame()
-        if self._backend is not None:
-            try:
-                return self._backend.grab(timeout=0.5).image
-            except Exception:  # noqa: BLE001 - picker keeps retrying
-                return None
-        return None
-
-    def set_static_frame(self, frame: np.ndarray) -> None:
-        """Show one fixed frame (used by tests and offline picking)."""
-        self._canvas.set_frame(frame)
+    def _load_frame(self) -> None:
+        """Fetch and display the frame; a failure stays visible and abortable."""
+        try:
+            if self._frame is not None:
+                frame = self._frame
+            elif self._frame_loader is not None:
+                frame = self._frame_loader()
+            else:
+                frame = grab_first_frame().image
+        except Exception as exc:  # noqa: BLE001 - shown, dialog stays open
+            self._info.setText(
+                f"Screen capture failed: {exc!r} — Esc cancels; retry from "
+                "the main window."
+            )
+            return
+        screen = QApplication.primaryScreen()
+        max_width = screen.size().width() if screen is not None else None
+        self._canvas.set_frame(frame, max_width=max_width)
+        self.showFullScreen()
         self._update_info()
 
     # -- actions -------------------------------------------------------------
@@ -202,7 +213,7 @@ class RegionPickerDialog(QDialog):
     def _update_info(self) -> None:
         region = self._canvas.selection()
         if region is None:
-            self._info.setText("Drag a rectangle on the frame.")
+            self._info.setText("Drag a rectangle on the screen. Esc cancels.")
             self._ok.setEnabled(False)
         else:
             x, y, w, h = region
@@ -221,19 +232,3 @@ class RegionPickerDialog(QDialog):
         x, y, w, h = region
         QApplication.clipboard().setText(f"{x},{y},{w},{h}")
         self._info.setText(f"Copied {x},{y},{w},{h} to clipboard.")
-
-    def accept(self) -> None:
-        self._shutdown()
-        super().accept()
-
-    def reject(self) -> None:
-        self._shutdown()
-        super().reject()
-
-    def _shutdown(self) -> None:
-        if self._backend is not None:
-            self._backend.stop()
-            self._backend = None
-        timer = getattr(self, "_timer", None)
-        if timer is not None:
-            timer.stop()

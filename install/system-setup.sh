@@ -39,6 +39,18 @@ fi
 echo "installing build deps: ${DEPS[*]}"
 dnf install -y "${DEPS[@]}"
 
+# 0b. runtime deps for Wayland screen capture (mutter/portal backends):
+#     PyGObject (gi) must come from the system, GStreamer needs the
+#     pipewire element for pipewiresrc. Requires the pipx venv to be
+#     created with --system-site-packages (see README).
+CAPTURE_DEPS=(python3-gobject gstreamer1-plugin-pipewire)
+if rpm -q python3-gobject >/dev/null 2>&1 && rpm -q gstreamer1-plugin-pipewire >/dev/null 2>&1; then
+  echo "capture runtime deps already present"
+else
+  echo "installing capture runtime deps: ${CAPTURE_DEPS[*]}"
+  dnf install -y "${CAPTURE_DEPS[@]}"
+fi
+
 # 1. uinput module at boot
 if ! grep -qs '^uinput$' /etc/modules-load.d/uinput.conf; then
   echo uinput > /etc/modules-load.d/uinput.conf

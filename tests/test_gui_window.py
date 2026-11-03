@@ -102,71 +102,42 @@ class TestMainWindow:
         else:
             assert win._tray is None
 
-
-class TestCaptureBackendFallback:
-    def _patch_factory(self, monkeypatch, order: list[str]) -> dict[str, object]:
-        """Replace create_backend with scripted fakes; returns start log."""
-        started: list[str] = []
-
-        class FakeBackend:
-            def __init__(self, name: str) -> None:
-                self._name = name
-                self.stopped = False
-
-            def start(self) -> None:
-                order.append(self._name)
-                if self._name == "mutter":
-                    raise RuntimeError("no GNOME session")
-                started.append(self._name)
-
-            def stop(self) -> None:
-                self.stopped = True
+    def test_region_picker_gets_real_screen_loader(self, window, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """Pick region wires grab_first_frame into the picker's loader."""
+        import numpy as np
 
         import input_automation.gui.window as window_mod
 
-        monkeypatch.setattr(window_mod, "create_backend", FakeBackend)
-        return {"started": started}
+        grabs: list[bool] = []
+        frame = np.zeros((60, 80, 3), dtype=np.uint8)
 
-    def test_prefers_mutter_falls_back_to_mock(
-        self, qtbot, monkeypatch  # type: ignore[no-untyped-def]
-    ) -> None:
-        order: list[str] = []
-        self._patch_factory(monkeypatch, order)
-        providers = _providers()
-        win = MainWindow(
-            device_provider=lambda *a, **kw: providers["devices"],  # type: ignore[arg-type,return-value]
-            macro_provider=lambda directory: providers["macros"],
-            macro_dir=Path(MACRO_DIR),
-        )
-        qtbot.addWidget(win)
-        backend = win._start_capture_backend()
-        assert order == ["mutter", "mock"]
-        assert backend.stopped is False
-        backend.stop()
+        def fake_grab(*args: object, **kwargs: object) -> object:
+            grabs.append(True)
 
-    def test_mutter_success_skips_mock(
-        self, qtbot, monkeypatch  # type: ignore[no-untyped-def]
-    ) -> None:
-        order: list[str] = []
-        self._patch_factory(monkeypatch, order)
-        providers = _providers()
-        win = MainWindow(
-            device_provider=lambda *a, **kw: providers["devices"],  # type: ignore[arg-type,return-value]
-            macro_provider=lambda directory: providers["macros"],
-            macro_dir=Path(MACRO_DIR),
-        )
-        qtbot.addWidget(win)
-        # only the mutter failure path raises in the fake; patch start to pass
-        import input_automation.gui.window as window_mod
+            class FakeFrame:
+                image = frame
 
-        factory = window_mod.create_backend
+            return FakeFrame()
 
-        class PassingMutter(factory):  # type: ignore[misc,valid-type]
-            def start(self) -> None:
-                order.append(self._name)
+        monkeypatch.setattr(window_mod, "grab_first_frame", fake_grab)
+        win, _ = window
+        pickers: list[object] = []
 
-        window_mod.create_backend = (  # type: ignore[assignment]
-            lambda name: PassingMutter(name)
-        )
-        win._start_capture_backend()
-        assert order == ["mutter"]
+        class FakePicker:
+            region = (1, 2, 3, 4)
+
+            def __init__(self, *, frame_loader: object, parent: object) -> None:
+                self.frame_loader = frame_loader
+                pickers.append(self)
+
+            def exec(self) -> int:
+                frame_loader = getattr(self, "frame_loader", None)
+                if callable(frame_loader):
+                    frame_loader()
+                return 1
+
+        monkeypatch.setattr(window_mod, "RegionPickerDialog", FakePicker)
+        win._open_region_picker()
+        assert len(pickers) == 1
+        assert grabs == [1]  # the loader really grabs the screen
+        assert "Region 1,2,3,4" in win.statusBar().currentMessage()

@@ -25,8 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from input_automation.capture.base import CaptureBackend
-from input_automation.capture.factory import create_backend
+from input_automation.capture.factory import grab_first_frame
 from input_automation.devices.discovery import DeviceInfo, list_devices
 from input_automation.gui.editor import MacroEditorDialog, new_macro_template
 from input_automation.gui.region_picker import RegionPickerDialog
@@ -189,13 +188,10 @@ class MainWindow(QMainWindow):
         self.refresh_macros()
 
     def _open_region_picker(self) -> None:
-        """Pick a screen region on live frames; copy x,y,w,h to the clipboard."""
-        try:
-            backend = self._start_capture_backend()
-        except Exception as exc:  # noqa: BLE001 - shown, not raised
-            self.statusBar().showMessage(f"no capture backend available: {exc!r}")
-            return
-        picker = RegionPickerDialog(backend=backend, parent=self)
+        """Grab one real-screen frame and pick a region on the fullscreen overlay."""
+        picker = RegionPickerDialog(
+            frame_loader=lambda: grab_first_frame().image, parent=self
+        )
         picker.exec()
         if picker.region is not None:
             x, y, w, h = picker.region
@@ -205,21 +201,6 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage("Region picking cancelled.")
-
-    def _start_capture_backend(self) -> CaptureBackend:
-        """Start a capture backend: real screen first, mock as fallback.
-
-        The backend is left running — :class:`RegionPickerDialog` skips a
-        redundant start and stops it when the dialog closes.
-        """
-        for name in ("mutter", "mock"):
-            backend = create_backend(name)
-            try:
-                backend.start()
-            except Exception:  # noqa: BLE001 - try the next backend
-                continue
-            return backend
-        raise RuntimeError("mutter and mock backends both failed to start")
 
     # -- tray ----------------------------------------------------------------
 

@@ -19,6 +19,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from input_automation.capture.base import CaptureError  # noqa: E402
 from input_automation.capture.mock import MockCaptureBackend  # noqa: E402
 from input_automation.gui.region_picker import (  # noqa: E402
     FrameCanvas,
@@ -60,12 +61,12 @@ class TestFrameCanvas:
         canvas = FrameCanvas()
         canvas.set_frame(_frame())
         assert canvas.pixmap() is not None and not canvas.pixmap().isNull()
-        assert canvas._scale == 1.0  # 300 px frame fits under the 800 px cap
+        assert canvas._scale == 1.0  # no max_width -> native size
 
     def test_wide_frame_is_scaled(self, qapp) -> None:  # type: ignore[no-untyped-def]
         canvas = FrameCanvas()
         frame = np.zeros((100, 1600, 3), dtype=np.uint8)
-        canvas.set_frame(frame)
+        canvas.set_frame(frame, max_width=800)
         assert canvas._scale == 800 / 1600
 
     def test_drag_produces_frame_coordinates(self, qapp) -> None:  # type: ignore[no-untyped-def]
@@ -75,9 +76,9 @@ class TestFrameCanvas:
         assert canvas.selection() == (10, 20, 50, 70)
 
     def test_drag_maps_back_from_display_scale(self, qapp) -> None:  # type: ignore[no-untyped-def]
-        """A 1600px frame shows at 800px; widget coords halve into frame coords."""
+        """A 1600px frame shown at 800px; widget coords halve into frame coords."""
         canvas = FrameCanvas()
-        canvas.set_frame(np.zeros((100, 1600, 3), dtype=np.uint8))
+        canvas.set_frame(np.zeros((100, 1600, 3), dtype=np.uint8), max_width=800)
         _drag(canvas, 20, 10, 60, 50)  # widget coords
         assert canvas.selection() == (40, 20, 80, 80)  # frame coords
 
@@ -89,41 +90,71 @@ class TestFrameCanvas:
 
 
 class TestRegionPickerDialog:
-    def test_ok_disabled_then_enabled(self, qapp) -> None:  # type: ignore[no-untyped-def]
-        picker = RegionPickerDialog(get_frame=lambda: _frame())
-        picker.set_static_frame(_frame())
+    def test_shows_static_frame_fullscreen(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        picker = RegionPickerDialog(frame=_frame())
+        qtbot.addWidget(picker)
+        picker.show()  # showEvent triggers the one-shot frame load
+        assert not picker._canvas.pixmap().isNull()
+        assert picker.isFullScreen()
+
+    def test_ok_disabled_then_enabled(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        picker = RegionPickerDialog(frame=_frame())
+        qtbot.addWidget(picker)
+        picker._load_frame()
         assert not picker._ok.isEnabled()
         _drag(picker._canvas, 5, 5, 45, 25)
         assert picker._ok.isEnabled()
         assert picker._canvas.selection() == (5, 5, 40, 20)
 
-    def test_confirm_sets_region_and_accepts(self, qapp) -> None:  # type: ignore[no-untyped-def]
-        picker = RegionPickerDialog(get_frame=lambda: _frame())
-        picker.set_static_frame(_frame())
+    def test_confirm_sets_region_and_accepts(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        picker = RegionPickerDialog(frame=_frame())
+        qtbot.addWidget(picker)
+        picker._load_frame()
         _drag(picker._canvas, 0, 0, 100, 50)
         picker._confirm()
         assert picker.result() == picker.DialogCode.Accepted
         assert picker.region == (0, 0, 100, 50)
 
-    def test_copy_writes_clipboard(self, qapp) -> None:  # type: ignore[no-untyped-def]
-        picker = RegionPickerDialog(get_frame=lambda: _frame())
-        picker.set_static_frame(_frame())
+    def test_copy_writes_clipboard(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        picker = RegionPickerDialog(frame=_frame())
+        qtbot.addWidget(picker)
+        picker._load_frame()
         _drag(picker._canvas, 7, 8, 17, 28)
         picker._copy_region()
         assert QApplication.clipboard().text() == "7,8,10,20"
 
-    def test_reject_stops_backend(self, qapp) -> None:  # type: ignore[no-untyped-def]
-        backend = MockCaptureBackend()
-        picker = RegionPickerDialog(backend=backend)
-        picker._shutdown()
-        assert picker._backend is None
-        picker._shutdown()  # second shutdown is a no-op
+    def test_capture_failure_is_visible_not_silent(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        def boom() -> np.ndarray:
+            raise CaptureError("no capture backend produced a frame (...)")
 
-    def test_live_frames_appear(self, qapp) -> None:  # type: ignore[no-untyped-def]
+        picker = RegionPickerDialog(frame_loader=boom)
+        qtbot.addWidget(picker)
+        picker._load_frame()
+        assert "Screen capture failed" in picker._info.text()
+        assert picker._canvas.pixmap() is not None
+        assert picker._canvas.pixmap().isNull()  # nothing was displayed
+
+    def test_frame_loader_grabs_once(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        calls: list[int] = []
+        frame = _frame()
+
+        def loader() -> np.ndarray:
+            calls.append(1)
+            return frame
+
+        picker = RegionPickerDialog(frame_loader=loader)
+        qtbot.addWidget(picker)
+        picker.show()
+        picker.show()  # second show must not re-grab
+        assert len(calls) == 1
+
+    def test_real_backend_frame_reaches_canvas(self, qtbot) -> None:  # type: ignore[no-untyped-def]
         backend = MockCaptureBackend()
-        picker = RegionPickerDialog(backend=backend)
-        try:
-            picker._refresh_frame()
-            assert not picker._canvas.pixmap().isNull()
-        finally:
-            picker._shutdown()
+
+        def loader() -> np.ndarray:
+            return backend.grab().image
+
+        picker = RegionPickerDialog(frame_loader=loader)
+        qtbot.addWidget(picker)
+        picker._load_frame()
+        assert not picker._canvas.pixmap().isNull()

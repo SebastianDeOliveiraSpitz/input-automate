@@ -34,10 +34,15 @@ Fedora/RHEL (the tool ships its own system setup for uinput access):
 ```bash
 git clone https://github.com/SebastianDeOliveiraSpitz/input-automate
 cd input-automate
-sudo ./install/system-setup.sh      # build deps, uinput udev rule, 'input' group
+sudo ./install/system-setup.sh      # build deps, capture runtime deps, uinput udev rule, 'input' group
 # log out and back in so the group change applies
-pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate@main
+pipx install --system-site-packages git+https://github.com/SebastianDeOliveiraSpitz/input-automate@main
 ```
+
+`--system-site-packages` is required for the Wayland screen-capture backends:
+PyGObject (`gi`) and GStreamer come from the system, not from PyPI. Without
+it the CLI/GUI still work, but `capture --backend mutter/portal` and the
+region picker fall back to the mock backend.
 
 For development/testing installs use an editable pipx install instead of
 re-installing on every pull:

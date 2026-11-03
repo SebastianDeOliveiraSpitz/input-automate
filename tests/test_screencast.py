@@ -118,3 +118,32 @@ def test_mutter_session_error_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(sc, "_session_bus", lambda: FailingBus())
     with pytest.raises(CaptureError, match="CreateSession failed"):
         mutter_screencast_session()
+
+
+def test_run_isolated_propagates_worker_error() -> None:
+    import input_automation.capture.screencast as sc
+
+    result: dict[str, Any] = {}
+
+    def run() -> None:
+        result["error"] = CaptureError("worker blew up")
+
+    with pytest.raises(CaptureError, match="worker blew up"):
+        sc._run_isolated(run, result)
+
+
+def test_run_isolated_worker_hang_raises_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time as time_mod
+
+    import input_automation.capture.screencast as sc
+
+    monkeypatch.setattr(sc, "PORTAL_TIMEOUT_MS", 200)
+    result: dict[str, Any] = {}
+
+    def run() -> None:
+        time_mod.sleep(2)  # worker never stores a node
+
+    with pytest.raises(CaptureError, match="did not deliver a node id"):
+        sc._run_isolated(run, result)
