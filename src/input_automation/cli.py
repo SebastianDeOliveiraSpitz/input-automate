@@ -26,6 +26,7 @@ from input_automation.output.virtual import (
     VirtualDevice,
     uinput_available,
 )
+from input_automation.project import Project, load_project, save_project
 from input_automation.vision.primitives import (
     bar_fill_fraction,
     color_fraction,
@@ -38,6 +39,11 @@ DAEMON_MACRO_DIR = Path.home() / ".config" / "input-automate" / "macros"
 app = typer.Typer(help="Automate inputs on Linux (Wayland).")
 macros_app = typer.Typer(help="List, validate, and run macros.")
 app.add_typer(macros_app, name="macros")
+
+project_app = typer.Typer(
+    help="Create, inspect, validate, and run SPS project files (.yaml/.yml/.json)."
+)
+app.add_typer(project_app, name="project")
 
 
 def _print_version(value: bool) -> None:
@@ -291,6 +297,98 @@ def macros_run(
         orchestrator = MacroOrchestrator(sink=device)
         orchestrator.run(macro, repeat=repeat)
     typer.echo(f"ran {macro.name} x{repeat}")
+
+
+@project_app.command("new")
+def project_new(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Project file to create (.yaml/.yml/.json)."),
+    ],
+    name: Annotated[
+        str | None,
+        typer.Option("--name", help="Project name (default: derived from the file name)."),
+    ] = None,
+) -> None:
+    """Create a new empty project file."""
+    project_name = name or path.stem
+    try:
+        project = Project(name=project_name)
+    except ValueError as exc:
+        typer.echo(
+            f"error: invalid project name {project_name!r}: {exc}", err=True
+        )
+        raise typer.Exit(2) from None
+    if path.exists():
+        typer.echo(f"error: {path} already exists", err=True)
+        raise typer.Exit(1)
+    try:
+        save_project(project, path)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"created {path} (project {project_name!r})")
+
+
+@project_app.command("open")
+def project_open(
+    path: Annotated[Path, typer.Argument(help="Project file to open.")],
+) -> None:
+    """Load a project file and print a summary of blocks and wires."""
+    try:
+        project = load_project(path)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: {path}: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{path}: project {project.name!r} (v{project.version})")
+    typer.echo(f"  blocks: {len(project.blocks)}")
+    for block in project.blocks:
+        pins = ", ".join(
+            f"{pin.name}:{pin.dtype.value} ({pin.direction.value})"
+            for pin in block.pins
+        ) or "-"
+        typer.echo(f"  - {block.id} ({block.type}): {pins}")
+    typer.echo(f"  wires: {len(project.wires)}")
+    for wire in project.wires:
+        typer.echo(
+            f"  - {wire.src_block}.{wire.src_pin} -> "
+            f"{wire.dst_block}.{wire.dst_pin}"
+        )
+
+
+@project_app.command("validate")
+def project_validate(
+    path: Annotated[Path, typer.Argument(help="Project file to validate.")],
+) -> None:
+    """Validate a project file against the schema."""
+    try:
+        project = load_project(path)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"{path}: invalid project: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(
+        f"{path}: ok ({project.name}, "
+        f"{len(project.blocks)} blocks, {len(project.wires)} wires)"
+    )
+
+
+@project_app.command("run")
+def project_run(
+    path: Annotated[Path, typer.Argument(help="Project file to run headless.")],
+) -> None:
+    """Headless run: load and validate the project (scan engine not yet implemented)."""
+    try:
+        project = load_project(path)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: {path}: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(
+        f"project {project.name!r}: {len(project.blocks)} blocks, "
+        f"{len(project.wires)} wires"
+    )
+    typer.echo(
+        "headless scan engine not yet implemented (T1-T5); nothing executed"
+    )
 
 
 def _parse_color(spec: str) -> tuple[int, int, int]:
