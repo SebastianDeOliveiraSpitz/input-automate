@@ -328,6 +328,7 @@ class TileEditorWindow(QMainWindow):
         self._device_provider = device_provider or list_devices
         self._macro_provider = macro_provider or self._default_macro_provider
         self._macro_dir = macro_dir
+        self._macro_dir.mkdir(parents=True, exist_ok=True)
         self._macro: Macro | None = None
         self._path: Path | None = None
         # the arming cluster lives IN this process: Arm/Disarm starts/stops it
@@ -634,7 +635,7 @@ class TileEditorWindow(QMainWindow):
             }
             triggers_root.addChild(self._make_row(data, selectable=True))
 
-        steps_root = QTreeWidgetItem(["Steps"])
+        steps_root = QTreeWidgetItem(["Actions"])
         steps_root.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled)
         tree.addTopLevelItem(steps_root)
         for step in macro.steps:
@@ -1068,13 +1069,17 @@ class TileEditorWindow(QMainWindow):
         macro = self._macro.model_copy(update={"name": self._stem_name(path)})
         path.write_text(macro_to_yaml_text(macro), encoding="utf-8")
         self._macro = macro
-        self._path = path
         self._reload_macro_combo()
-        # keep the just-saved file selected (and open it)
+        # the combo refresh may have opened a different macro; re-show the
+        # just-saved one directly (don't route through _open_selected_macro,
+        # which reads whatever happens to be selected in the combo)
+        self._path = path
+        self._set_macro(macro)
         self._macro_combo.blockSignals(True)
         for i in range(self._macro_combo.count()):
             if self._macro_combo.itemData(i) == str(path):
                 self._macro_combo.setCurrentIndex(i)
+                break
         self._macro_combo.blockSignals(False)
         self._refresh_macros_list()  # immediate dock feedback (timer covers the rest)
         self.statusBar().showMessage(f"saved {path}")
@@ -1089,7 +1094,7 @@ class TileEditorWindow(QMainWindow):
             self.statusBar().showMessage(f"{self._macro.name}: error: {exc!r}")
             return
         self.statusBar().showMessage(
-            f"{self._macro.name}: dry run ok ({len(self._macro.steps)} steps)"
+            f"{self._macro.name}: dry run ok ({len(self._macro.steps)} actions)"
         )
 
     def _real_run(self) -> None:

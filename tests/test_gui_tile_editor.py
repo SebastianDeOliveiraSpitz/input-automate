@@ -80,7 +80,7 @@ class TestWindowLayout:
         win, _file, _dir = editor
         assert win.windowTitle() == "input-automation"
         assert _triggers_root(win).text(0) == "Triggers"
-        assert _steps_root(win).text(0) == "Steps"
+        assert _steps_root(win).text(0) == "Actions"
         # the macro loaded from the provider is already in the tree
         assert _steps_root(win).childCount() == 3
         assert _triggers_root(win).childCount() == 1
@@ -333,3 +333,44 @@ class TestFedoraFeedbackRegressions:
         win._update_tile(old_row, code="F3")
         assert win._macro is not None
         assert win._macro.triggers[-1].code == "F2"  # untouched by stale edit
+
+
+class TestSaveLoadRoundTrip:
+    """Save → reload → arm: saved macros must round-trip through the GUI."""
+
+    def test_new_macro_saves_and_reloads(
+        self, editor, monkeypatch
+    ) -> None:
+        """New macro → save → file on disk → loads back with same content."""
+        win, _file, _dir = editor
+        win._new_macro()
+        win._macro.triggers[0].code = "F2"  # set on model directly
+        win._populate_tree(win._macro)
+
+        target = win._macro_dir / "my-macro.yaml"
+        orig = QFileDialog.getSaveFileName
+
+        def fake_save(*args, **kwargs):
+            return (str(target), "")
+
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_save)
+        win._save_macro()
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", orig)
+
+        # file exists on disk and round-trips
+        assert target.exists()
+        saved = load_macro(target)
+        assert saved.name == "my-macro"
+        assert saved.triggers[0].code == "F2"
+
+        # the editor now points at the saved file
+        assert win._path == target
+        assert win._macro is not None
+        assert win._macro.triggers[0].code == "F2"
+
+    def test_new_macro_test_run_without_saving(self, editor) -> None:
+        """A brand-new macro (no file) can be test-run without saving."""
+        win, _file, _dir = editor
+        win._new_macro()
+        win._test_run()
+        assert "dry run ok" in win.statusBar().currentMessage()
