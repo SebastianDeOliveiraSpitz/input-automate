@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
 import shiboken6  # noqa: TID251 - ships with PySide6; used for Qt object liveness
-from PySide6.QtCore import QByteArray, QMimeData, Qt, QTimer
+from PySide6.QtCore import QByteArray, QMimeData, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QDrag
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -56,6 +58,7 @@ from PySide6.QtWidgets import (
 from input_automation.capture.factory import grab_first_frame
 from input_automation.daemon import AlreadyArmed, MacroDaemon
 from input_automation.devices.discovery import list_devices
+from input_automation.devices.listener import InputEvent
 from input_automation.gui.editor import MacroEditorDialog, _action_summary, new_macro_template
 from input_automation.gui.region_picker import RegionPickerDialog
 from input_automation.macros.loader import (
@@ -145,6 +148,28 @@ PALETTE: list[tuple[str, str, str]] = [
     ("Output", "▢ Scroll", "scroll"),
     ("Timer", "▢ Wait ms", "wait"),
 ]
+
+
+class KeyDetector(QObject):
+    """Captures the next key/button press on any device and emits its
+    evdev code name, so users don't have to look up codes by hand."""
+
+    key_detected = Signal(str)
+
+    def __init__(self, daemon: MacroDaemon):
+        super().__init__()
+        self._daemon = daemon
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        def on_event(event: InputEvent) -> None:
+            self.key_detected.emit(event.code_name)
+
+        self._daemon.detect_input(on_event, timeout_s=15.0)
 
 
 def _tree_row(parent: QTreeWidgetItem, index: int) -> QTreeWidgetItem:
@@ -397,6 +422,12 @@ class TileEditorWindow(QMainWindow):
         self._build_tray()
         self._reload_macro_combo()
 
+        # key-detector for the "detect" button in the trigger config panel
+        self._detector = KeyDetector(self._daemon)
+        self._detector.key_detected.connect(self._on_key_detected)
+        self._current_code_edit: QLineEdit | None = None
+        self._current_code_item: QTreeWidgetItem | None = None
+
         # periodic refresh: armed status + macro list (hot-reload feedback)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(2000)
@@ -421,13 +452,53 @@ class TileEditorWindow(QMainWindow):
             try:
                 daemon.start()
             except AlreadyArmed as exc:
-                self.statusBar().showMessage(f"error: {exc}")
+                QMessageBox.critical(
+                    self, "already armed",
+                    f"{exc}\n\nClose the other GUI or stop the "
+                    "'input-automation daemon' service first.",
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - show error, don't crash
+                QMessageBox.critical(
+                    self, "could not arm",
+                    f"{exc}\n\nCheck that you are in the 'input' group "
+                    "and ran install/system-setup.sh.",
+                )
                 return
             self.statusBar().showMessage(
                 f"Armed {len(daemon.armed)} macro(s) — triggers are live."
                 + (f" Skipped: {', '.join(daemon.skipped)}" if daemon.skipped else "")
             )
         self._refresh_armed_ui()
+
+    def _start_detect(self, code_edit: QLineEdit, item: QTreeWidgetItem) -> None:
+        """Start listening for the next key/button press to fill ``code_edit``."""
+        assert item is not None  # noqa: S101 - called from the tree row
+        self._current_code_edit = code_edit
+        self._current_code_item = item
+        code_edit.setText("detecting...")
+        code_edit.setEnabled(False)
+        detect_btn = self.sender()
+        if isinstance(detect_btn, QPushButton):
+            detect_btn.setText("detecting...")
+            detect_btn.setEnabled(False)
+        self.statusBar().showMessage("press any key or button on any device…")
+        self._detector.start()
+
+    @Slot(str)
+    def _on_key_detected(self, code_name: str) -> None:
+        """Fill the detected code into the trigger field."""
+        item = self._current_code_item
+        if item is None or self._current_code_edit is None:
+            return
+        self._current_code_edit.setText(code_name.upper())
+        self._current_code_edit.setEnabled(True)
+        self._update_tile(item, code=code_name.upper())
+        detect_btn = self.sender()
+        if isinstance(detect_btn, QPushButton):
+            detect_btn.setText("detect")
+            detect_btn.setEnabled(True)
+        self.statusBar().showMessage(f"detected {code_name}")
 
     def _refresh_armed_ui(self) -> None:
         """Update arm button, macro dock and status from the daemon state."""
@@ -836,11 +907,12 @@ class TileEditorWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         t = data["type"]
 
-        def text_field(label: str, value: Any, on_change: Any) -> None:
+        def text_field(label: str, value: Any, on_change: Any) -> QLineEdit:
             layout.addWidget(QLabel(label))
             edit = QLineEdit("" if value is None else str(value))
             edit.editingFinished.connect(lambda: on_change(edit.text()))
             layout.addWidget(edit)
+            return edit
 
         def spin_field(label: str, value: int, on_change: Any) -> None:
             layout.addWidget(QLabel(label))
@@ -870,8 +942,13 @@ class TileEditorWindow(QMainWindow):
                         lambda v: self._update_tile(item, kind=v))
             combo_field("device", self._device_choices(), data["device"],
                         lambda v: self._update_tile(item, device=v))
-            text_field("code", data["code"],
-                       lambda v: self._update_tile(item, code=v.upper()))
+            code_edit = text_field("code", data["code"],
+                                   lambda v: self._update_tile(item, code=v.upper()))
+            detect_btn = QPushButton("detect")
+            detect_btn.setToolTip("press the key/button you want to use")
+            detect_btn.clicked.connect(
+                lambda: self._start_detect(code_edit, item))
+            layout.addWidget(detect_btn)
             combo_field("state", [("down", "down"), ("up", "up")],
                         data["state"],
                         lambda v: self._update_tile(item, state=v))

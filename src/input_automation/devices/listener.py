@@ -177,12 +177,14 @@ class DeviceListener:
         for device in list(self._devices):
             with contextlib.suppress(OSError):
                 device.close()
-        for thread in self._threads:
-            thread.join(timeout=5)
+        # Don't join reader threads: they may be blocked in read() on an
+        # evdev fd that close() doesn't always unblock from another thread.
+        # They are daemon threads and exit when the process exits.
         self._threads.clear()
         self._devices.clear()
         self._running = False
-        self._queue.put(None)
+        with contextlib.suppress(Exception):
+            self._queue.put_nowait(None)
 
     def __enter__(self) -> DeviceListener:
         self.start()

@@ -92,6 +92,7 @@ class MacroDaemon:
         self._running = False
         self.armed: list[str] = []
         self.skipped: list[str] = []
+        self.last_error: str | None = None
 
     # -- arming ----------------------------------------------------------------
 
@@ -192,33 +193,59 @@ class MacroDaemon:
         return DeviceListener(paths=self._device_paths, callback=self.handle_event)
 
     def start(self) -> None:
-        """Arm the cluster in the background (GUI path). Raises AlreadyArmed."""
+        """Arm the cluster in the background (GUI path). Raises AlreadyArmed.
+
+        Never leaves the daemon half-started: on any failure everything
+        allocated so far is torn down again.
+        """
         if self._running:
             return
-        self._acquire_lock()
-        if self._runner is None:
-            self.reload()
-        self._listener = self._make_listener()
-        self._watcher_stop = threading.Event()
-        self._running = True
-        self._listener.start()
-        threading.Thread(target=self._watch_files_loop, daemon=True).start()
+        try:
+            self._acquire_lock()
+        except AlreadyArmed:
+            raise
+        except Exception as exc:  # noqa: BLE001 - never crash the GUI on arming
+            self.last_error = f"could not start: {exc}"
+            raise RuntimeError(self.last_error) from exc
+        try:
+            if self._runner is None:
+                self.reload()
+            self._listener = self._make_listener()
+            self._watcher_stop = threading.Event()
+            self._running = True
+            self._listener.start()
+            threading.Thread(target=self._watch_files_loop, daemon=True).start()
+        except Exception:  # noqa: BLE001 - roll back on any start failure
+            self.stop()
+            raise
 
     def stop(self) -> None:
-        """Disarm the cluster (listener threads stop, lock released)."""
+        """Disarm the cluster (listener threads stop, lock released).
+
+        Never raises: every step is wrapped so a misbehaving evdev device
+        or stale lock file can never crash the GUI.
+        """
         if not self._running:
             return
         self._running = False
         if self._watcher_stop is not None:
             self._watcher_stop.set()
-        if self._listener is not None:
-            self._listener.stop()
-            self._listener = None
+        # stop the listener first: close evdev devices, join reader threads.
+        # Wrap in try/except — closing a fd another thread is blocked reading
+        # can raise, and we must never let that reach the GUI.
+        listener = self._listener
+        self._listener = None
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception as exc:  # noqa: BLE001 - listener teardown must not kill the GUI
+                self.last_error = f"listener stop failed: {exc}"
         self._release_lock()
 
     def _watch_files_loop(self) -> None:
         stop = self._watcher_stop
-        assert stop is not None  # noqa: S101 - set in start()
+        if stop is None:  # defensive: start() always sets this
+            return
         while not stop.is_set():
             stop.wait(RELOAD_INTERVAL_S)
             with contextlib.suppress(Exception):
@@ -232,6 +259,41 @@ class MacroDaemon:
                 time.sleep(3600)
         finally:
             self.stop()
+
+    def detect_input(
+        self,
+        callback: Callable[[InputEvent], None],
+        timeout_s: float = 10.0,
+    ) -> bool:
+        """Listen for the next key/button event on any device, call
+        ``callback(event)`` with it, then stop. Returns ``True`` if an
+        event was captured, ``False`` on timeout.
+
+        Used by the GUI's "detect" mode so users don't have to look up
+        evdev key codes by hand — they press the key and the code is
+        filled in automatically.
+        """
+        event_received = threading.Event()
+
+        def wrapped(event: InputEvent) -> None:
+            try:
+                callback(event)
+            finally:
+                event_received.set()
+
+        listener = DeviceListener(
+            paths=self._device_paths,
+            callback=wrapped,
+        )
+        try:
+            listener.start()
+        except Exception:  # noqa: BLE001 - no devices available
+            return False
+        try:
+            return event_received.wait(timeout_s)
+        finally:
+            with contextlib.suppress(Exception):
+                listener.stop()
 
 
 def run_daemon(
