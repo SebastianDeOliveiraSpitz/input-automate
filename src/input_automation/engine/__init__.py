@@ -3,6 +3,11 @@
 from input_automation.engine.block import Block
 from input_automation.engine.pins import Pin, PinTypeError
 from input_automation.engine.registry import BlockRegistry, default_registry
+from input_automation.engine.scan import (
+    InputReader,
+    OutputWriter,
+    ScanExecutor,
+)
 from input_automation.engine.wires import (
     DuplicateBlockError,
     DuplicateWireError,
@@ -25,6 +30,9 @@ __all__ = [
     "PinTypeError",
     "BlockRegistry",
     "default_registry",
+    "ScanExecutor",
+    "InputReader",
+    "OutputWriter",
     "Wire",
     "WireGraph",
     "WireGraphError",
