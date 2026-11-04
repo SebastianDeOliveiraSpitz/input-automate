@@ -9,7 +9,7 @@
 - [x] T1: Block base class + pin model (input/output, typed), block registry
 - [x] T2: Wire graph: add/remove connections, cycle detection, topological sort
 - [x] T3: Cyclic scan executor: read inputs → execute blocks → write outputs, configurable cycle time, deterministic
-- [ ] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
+- [x] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
 - [ ] T5: Compare blocks: `==`, `!=`, `<`, `>`, threshold; pass-through/mux
 - [ ] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
 
