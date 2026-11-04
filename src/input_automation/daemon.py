@@ -1,25 +1,34 @@
-"""Always-on macro daemon (M7 T19).
+"""Always-on macro arming (M7 T19).
 
-Watches the input devices continuously and fires macros whenever one of
-their trigger bindings matches. Semantics per macro: the triggers are
-OR-combined — *any* firing trigger executes the macro's full step tree.
+Arms all macros in the macro directory and fires them on device events.
+Semantics per macro: the triggers are OR-combined — *any* firing trigger
+executes the macro's full step tree. A trigger's ``device`` field
+restricts the binding to that evdev path.
 
-- All macros in the macro directory are armed (YAML and ``.py``).
-- Macro files are hot-reloaded: changed/added/deleted files are picked up
-  within ``RELOAD_INTERVAL_S`` (mtime polling; simple and reliable).
-- Every firing is appended to a JSONL execution log (AGENTS.md rule).
-- Headless-testable: the device listener and the output sink are
-  injectable; :meth:`reload`, :meth:`check_reload` and
-  :meth:`handle_event` are public.
+The same :class:`MacroDaemon` serves both front ends:
+
+- **GUI first citizen**: the tile editor arms/disarms the cluster
+  in-process (:meth:`start` / :meth:`stop`) — no background process
+  needed while the GUI is open.
+- **Headless daemon**: ``input-automation daemon`` (CLI/systemd) runs the
+  same engine blocking (:meth:`run`).
+
+A lock file guarantees only ONE armed instance at a time (a GUI and a
+daemon running side by side would inject every event twice). Macro files
+are hot-reloaded (mtime polling). Every firing is appended to a JSONL
+execution log (AGENTS.md rule).
 """
 
 from __future__ import annotations
 
 import contextlib
+import fcntl
+import os
 import threading
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from input_automation.devices.listener import DeviceListener, InputEvent
 from input_automation.macros.loader import load_macro, load_python_macro
@@ -28,17 +37,36 @@ from input_automation.macros.runner import MacroRunner
 from input_automation.output.virtual import VirtualDevice
 from input_automation.triggers.engine import TriggerEngine
 
-__all__ = ["MacroDaemon", "run_daemon", "DEFAULT_MACRO_DIR", "RELOAD_INTERVAL_S"]
+__all__ = [
+    "AlreadyArmed",
+    "MacroDaemon",
+    "run_daemon",
+    "DEFAULT_MACRO_DIR",
+    "LOCK_PATH",
+    "RELOAD_INTERVAL_S",
+]
 
 # Macro home per AGENTS.md: ~/.config/input-automate/macros/
 DEFAULT_MACRO_DIR = Path.home() / ".config" / "input-automate" / "macros"
+LOCK_PATH = Path.home() / ".config" / "input-automate" / "armed.lock"
 RELOAD_INTERVAL_S = 2.0
 
 _EXECUTION_LOG = Path.home() / ".config" / "input-automate" / "logs" / "executions.jsonl"
 
 
+class AlreadyArmed(RuntimeError):
+    """Another process already holds the arming lock (GUI or daemon)."""
+
+
 class MacroDaemon:
-    """Arms all macros in a directory and fires them on device events."""
+    """Arms all macros in a directory and fires them on device events.
+
+    Lifecycle (GUI): :meth:`start` arms everything on background threads,
+    :meth:`stop` disarms. Lifecycle (CLI): :meth:`run` blocks. Reload
+    semantics: :meth:`reload` re-reads all macro files (per-file tolerant
+    — one broken file cannot kill the cluster); :meth:`check_reload`
+    re-arms when files changed.
+    """
 
     def __init__(
         self,
@@ -48,19 +76,28 @@ class MacroDaemon:
         device_paths: Sequence[str] | None = None,
         listener_factory: Callable[..., DeviceListener] | None = None,
         log_path: Path | None = _EXECUTION_LOG,
+        lock_path: Path = LOCK_PATH,
     ) -> None:
         self._macro_dir = macro_dir
         self._sink = sink
         self._device_paths = list(device_paths) if device_paths else None
         self._listener_factory = listener_factory
         self._log_path = log_path
-        self._lock = threading.Lock()
+        self._lock_path = lock_path
+        self._lock: threading.Lock = threading.Lock()
+        self._lock_file: Any = None  # the flock-held file object
         self._runner: MacroRunner | None = None
-        self._mtimes: dict[Path, float] = {}
+        self._listener: DeviceListener | None = None
+        self._watcher_stop: threading.Event | None = None
+        self._running = False
         self.armed: list[str] = []
         self.skipped: list[str] = []
 
     # -- arming ----------------------------------------------------------------
+
+    @property
+    def running(self) -> bool:
+        return self._running
 
     def reload(self) -> None:
         """(Re)load every macro file; replaces the trigger bindings wholesale.
@@ -84,7 +121,7 @@ class MacroDaemon:
                     macro = load_macro(path)
                 else:
                     macro = load_python_macro(path)
-            except Exception as exc:  # noqa: BLE001 - one bad file must not kill the daemon
+            except Exception as exc:  # noqa: BLE001 - one bad file must not kill the cluster
                 skipped.append(f"{path.name}: {exc}")
                 continue
             try:
@@ -123,28 +160,78 @@ class MacroDaemon:
             return
         runner.handle_event(event)
 
-    # -- long-running loop -------------------------------------------------------
+    # -- lifecycle (GUI + CLI share this) ---------------------------------------
+
+    def _acquire_lock(self) -> None:
+        """Exclusive flock: exactly one armed instance process-wide."""
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_file = self._lock_path.open("w")
+        try:
+            fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError) as exc:
+            self._lock_file.close()
+            self._lock_file = None
+            raise AlreadyArmed(
+                "another armed instance is already running "
+                "(the GUI or 'input-automation daemon')"
+            ) from exc
+        self._lock_file.write(str(os.getpid()))
+        self._lock_file.flush()
+
+    def _release_lock(self) -> None:
+        if self._lock_file is not None:
+            with contextlib.suppress(OSError):
+                fcntl.flock(self._lock_file, fcntl.LOCK_UN)
+            self._lock_file.close()
+            self._lock_file = None
+
+    def _make_listener(self) -> DeviceListener:
+        factory = self._listener_factory
+        if factory is not None:
+            return factory(paths=self._device_paths, callback=self.handle_event)
+        return DeviceListener(paths=self._device_paths, callback=self.handle_event)
+
+    def start(self) -> None:
+        """Arm the cluster in the background (GUI path). Raises AlreadyArmed."""
+        if self._running:
+            return
+        self._acquire_lock()
+        if self._runner is None:
+            self.reload()
+        self._listener = self._make_listener()
+        self._watcher_stop = threading.Event()
+        self._running = True
+        self._listener.start()
+        threading.Thread(target=self._watch_files_loop, daemon=True).start()
+
+    def stop(self) -> None:
+        """Disarm the cluster (listener threads stop, lock released)."""
+        if not self._running:
+            return
+        self._running = False
+        if self._watcher_stop is not None:
+            self._watcher_stop.set()
+        if self._listener is not None:
+            self._listener.stop()
+            self._listener = None
+        self._release_lock()
+
+    def _watch_files_loop(self) -> None:
+        stop = self._watcher_stop
+        assert stop is not None  # noqa: S101 - set in start()
+        while not stop.is_set():
+            stop.wait(RELOAD_INTERVAL_S)
+            with contextlib.suppress(Exception):
+                self.check_reload()
 
     def run(self) -> None:  # pragma: no cover - live loop, verified on real hardware
         """Block and run the daemon: device events in, macros out."""
-        if self._runner is None:
-            self.reload()
-        listener = (
-            self._listener_factory(paths=self._device_paths, callback=self.handle_event)
-            if self._listener_factory is not None
-            else DeviceListener(paths=self._device_paths, callback=self.handle_event)
-        )
-
-        def _watch_files() -> None:
-            while True:
-                time.sleep(RELOAD_INTERVAL_S)
-                with contextlib.suppress(Exception):
-                    self.check_reload()
-
-        threading.Thread(target=_watch_files, daemon=True).start()
-        with listener:
-            while True:
+        self.start()
+        try:
+            while self._running:
                 time.sleep(3600)
+        finally:
+            self.stop()
 
 
 def run_daemon(
@@ -154,13 +241,16 @@ def run_daemon(
 ) -> None:  # pragma: no cover - live loop
     """Create and run the daemon (blocking; Ctrl+C stops it)."""
     daemon = MacroDaemon(macro_dir, sink=sink)
-    daemon.reload()
-    print(  # noqa: T201 - CLI feedback for a foreground daemon
-        f"armed {len(daemon.armed)} macro(s) from {macro_dir}"
-        + (f" (skipped: {', '.join(daemon.skipped)})" if daemon.skipped else ""),
-        flush=True,
-    )
     try:
+        daemon.reload()
+        print(  # noqa: T201 - CLI feedback for a foreground daemon
+            f"armed {len(daemon.armed)} macro(s) from {macro_dir}"
+            + (f" (skipped: {', '.join(daemon.skipped)})" if daemon.skipped else ""),
+            flush=True,
+        )
         daemon.run()
     except KeyboardInterrupt:
         print("daemon stopped", flush=True)  # noqa: T201
+    except AlreadyArmed as exc:
+        print(f"error: {exc}", flush=True)  # noqa: T201
+        raise SystemExit(1) from None

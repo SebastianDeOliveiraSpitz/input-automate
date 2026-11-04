@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QDockWidget,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -53,6 +54,7 @@ from PySide6.QtWidgets import (
 )
 
 from input_automation.capture.factory import grab_first_frame
+from input_automation.daemon import AlreadyArmed, MacroDaemon
 from input_automation.devices.discovery import list_devices
 from input_automation.gui.editor import MacroEditorDialog, _action_summary, new_macro_template
 from input_automation.gui.region_picker import RegionPickerDialog
@@ -293,6 +295,7 @@ class TileEditorWindow(QMainWindow):
         device_provider: Any = None,
         macro_provider: Any = None,
         macro_dir: Path = DEFAULT_MACRO_DIR,
+        daemon: Any = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("input-automation")
@@ -302,6 +305,8 @@ class TileEditorWindow(QMainWindow):
         self._macro_dir = macro_dir
         self._macro: Macro | None = None
         self._path: Path | None = None
+        # the arming cluster lives IN this process: Arm/Disarm starts/stops it
+        self._daemon = daemon or MacroDaemon(macro_dir)
         # the tree item the config panel is currently bound to; config edits
         # against anything else are stale (their row may already be deleted)
         self._config_item: QTreeWidgetItem | None = None
@@ -317,6 +322,11 @@ class TileEditorWindow(QMainWindow):
         self._macro_combo.currentTextChanged.connect(self._open_selected_macro)
         self._new_btn = QPushButton("New")
         self._save_btn = QPushButton("Save")
+        self._arm_btn = QPushButton("▶ Arm macros")
+        self._arm_btn.setToolTip(
+            "Arm/disarm ALL saved macros: while armed, every trigger fires"
+            " its macro's steps from real device events."
+        )
         self._test_btn = QPushButton("Test run (dry)")
         self._run_btn = QPushButton("Run (real)")
         self._run_btn.setToolTip(
@@ -330,6 +340,7 @@ class TileEditorWindow(QMainWindow):
             self._macro_combo,
             self._new_btn,
             self._save_btn,
+            self._arm_btn,
             self._test_btn,
             self._run_btn,
             self._yaml_btn,
@@ -369,6 +380,7 @@ class TileEditorWindow(QMainWindow):
         # -- wiring -----------------------------------------------------------
         self._new_btn.clicked.connect(self._new_macro)
         self._save_btn.clicked.connect(self._save_macro)
+        self._arm_btn.clicked.connect(self._toggle_armed)
         self._test_btn.clicked.connect(self._test_run)
         self._run_btn.clicked.connect(self._real_run)
         self._yaml_btn.clicked.connect(self._open_yaml_editor)
@@ -381,8 +393,96 @@ class TileEditorWindow(QMainWindow):
             lambda item: self._insert_tile(str(item.data(_TILE_DATA)), None)
         )
 
+        self._build_macros_dock()
         self._build_tray()
         self._reload_macro_combo()
+
+        # periodic refresh: armed status + macro list (hot-reload feedback)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(2000)
+        self._refresh_timer.timeout.connect(self._refresh_armed_ui)
+        self._refresh_timer.start()
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt naming
+        """Closing the GUI disarms the in-process cluster (lock released)."""
+        if self._daemon.running:
+            self._daemon.stop()
+        super().closeEvent(event)
+
+    # -- armed cluster (GUI first citizen) -------------------------------------
+
+    def _toggle_armed(self) -> None:
+        """Start/stop the whole trigger->macro cluster in this process."""
+        daemon = self._daemon
+        if daemon.running:
+            daemon.stop()
+            self.statusBar().showMessage("Macros disarmed — triggers are inactive.")
+        else:
+            try:
+                daemon.start()
+            except AlreadyArmed as exc:
+                self.statusBar().showMessage(f"error: {exc}")
+                return
+            self.statusBar().showMessage(
+                f"Armed {len(daemon.armed)} macro(s) — triggers are live."
+                + (f" Skipped: {', '.join(daemon.skipped)}" if daemon.skipped else "")
+            )
+        self._refresh_armed_ui()
+
+    def _refresh_armed_ui(self) -> None:
+        """Update arm button, macro dock and status from the daemon state."""
+        daemon = self._daemon
+        if daemon.running:
+            self._arm_btn.setText(f"⏹ Disarm ({len(daemon.armed)} macros)")
+            self._arm_btn.setStyleSheet("QPushButton { font-weight: bold; }")
+        else:
+            self._arm_btn.setText("▶ Arm macros")
+            self._arm_btn.setStyleSheet("")
+        self._refresh_macros_list()
+
+    def _build_macros_dock(self) -> None:
+        """Dock listing every saved macro with its trigger summary."""
+        self._macros_dock = QDockWidget("Macros", self)
+        self._macros_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self._macros_list = QListWidget()
+        self._macros_list.itemDoubleClicked.connect(self._open_macro_from_list)
+        self._macros_dock.setWidget(self._macros_list)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._macros_dock)
+        self._refresh_macros_list()
+
+    def _refresh_macros_list(self) -> None:
+        """(Re)fill the macros dock from the macro directory."""
+        opened = self._path.name if self._path is not None else None
+        self._macros_list.blockSignals(True)
+        self._macros_list.clear()
+        try:
+            entries = self._macro_provider(self._macro_dir)
+        except Exception:  # noqa: BLE001 - dock is best-effort
+            self._macros_list.blockSignals(False)
+            return
+        for path, macro in entries:
+            triggers = ", ".join(
+                f"{t.kind} {t.code} @{t.device}" for t in macro.triggers
+            )
+            marker = "● " if self._daemon.running else ""
+            opened_marker = "» " if opened == path.name else ""
+            item = QListWidgetItem(
+                f"{marker}{opened_marker}{macro.name}  ({path.name})\n"
+                f"    ⚡ {triggers}"
+            )
+            item.setData(_TILE_DATA, str(path))
+            self._macros_list.addItem(item)
+        self._macros_list.blockSignals(False)
+
+    def _open_macro_from_list(self, item: QListWidgetItem) -> None:
+        """Double-click a macro in the dock to open it in the tile editor."""
+        path = str(item.data(_TILE_DATA))
+        for i in range(self._macro_combo.count()):
+            if self._macro_combo.itemData(i) == path:
+                self._macro_combo.setCurrentIndex(i)  # fires _open_selected_macro
+                return
 
     # -- macro files ---------------------------------------------------------
 
@@ -899,6 +999,7 @@ class TileEditorWindow(QMainWindow):
             if self._macro_combo.itemData(i) == str(path):
                 self._macro_combo.setCurrentIndex(i)
         self._macro_combo.blockSignals(False)
+        self._refresh_macros_list()  # immediate dock feedback (timer covers the rest)
         self.statusBar().showMessage(f"saved {path}")
 
     def _test_run(self) -> None:

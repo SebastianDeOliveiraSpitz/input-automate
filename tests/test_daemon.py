@@ -3,6 +3,7 @@
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -191,3 +192,134 @@ class TestThreadSafety:
             daemon.reload()
         thread.join()
         assert errors == []
+
+
+class FakeListener:
+    """Records lifecycle calls; events are pushed manually in tests."""
+
+    # class-level registries (shared intentionally; tests clear them)
+    started: list[Any] = []
+    stopped: list[Any] = []
+
+    def __init__(self, *, paths=None, callback=None) -> None:  # type: ignore[no-untyped-def]
+        self.paths = paths
+        self.callback = callback
+        FakeListener.started.append(self)
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        FakeListener.stopped.append(self)
+        self.callback = None
+
+    def emit(self, event: InputEvent) -> None:
+        """Push a synthetic device event through the daemon callback."""
+        if self.callback is None:
+            return  # listener was stopped — drop events
+        self.callback(event)
+
+
+class TestLifecycle:
+    """GUI-first arming: start/stop in-process, exclusive across instances."""
+
+    def test_start_stop_lifecycle(self, tmp_path: Path) -> None:
+        FakeListener.started.clear()
+        FakeListener.stopped.clear()
+        _write_macro(tmp_path, "one", "Q", "a")
+        sink = RecordingSink()
+        daemon = MacroDaemon(
+            tmp_path,
+            sink=sink,
+            listener_factory=lambda **kw: FakeListener(**kw),
+            lock_path=tmp_path / "armed.lock",
+        )
+        assert not daemon.running
+        daemon.start()
+        assert daemon.running
+        assert daemon.armed == ["one"]
+        assert len(FakeListener.started) == 1
+
+        # fire through the fake device
+        FakeListener.started[-1].emit(_key_event(KEY_Q, 1))
+        assert sink.taps == [KEY_A]
+
+        daemon.stop()
+        assert not daemon.running
+        assert len(FakeListener.stopped) == 1
+        # after stop, events do nothing
+        FakeListener.started[-1].emit(_key_event(KEY_Q, 1))
+        assert sink.taps == [KEY_A]
+
+    def test_second_instance_cannot_arm(self, tmp_path: Path) -> None:
+        from input_automation.daemon import AlreadyArmed
+
+        FakeListener.started.clear()
+        FakeListener.stopped.clear()
+        _write_macro(tmp_path, "one", "Q", "a")
+        lock = tmp_path / "armed.lock"
+        first = MacroDaemon(
+            tmp_path,
+            sink=RecordingSink(),
+            listener_factory=lambda **kw: FakeListener(**kw),
+            lock_path=lock,
+        )
+        first.start()
+        second = MacroDaemon(
+            tmp_path,
+            sink=RecordingSink(),
+            listener_factory=lambda **kw: FakeListener(**kw),
+            lock_path=lock,
+        )
+        with pytest.raises(AlreadyArmed, match="another armed instance"):
+            second.start()
+        first.stop()
+        # after the first disarms, the second can arm
+        second.start()
+        assert second.running
+        second.stop()
+
+    def test_stop_releases_lock_file(self, tmp_path: Path) -> None:
+        _write_macro(tmp_path, "one", "Q", "a")
+        lock = tmp_path / "armed.lock"
+        daemon = MacroDaemon(
+            tmp_path,
+            sink=RecordingSink(),
+            listener_factory=lambda **kw: FakeListener(**kw),
+            lock_path=lock,
+        )
+        daemon.start()
+        daemon.stop()
+        # a fresh daemon must be able to take the lock again immediately
+        other = MacroDaemon(
+            tmp_path,
+            sink=RecordingSink(),
+            listener_factory=lambda **kw: FakeListener(**kw),
+            lock_path=lock,
+        )
+        other.start()
+        assert other.running
+        other.stop()
+
+    def test_hot_reload_still_reaches_event_path(self, tmp_path: Path) -> None:
+        path = _write_macro(tmp_path, "live", "Q", "a")
+        daemon = MacroDaemon(
+            tmp_path,
+            sink=RecordingSink(),
+            listener_factory=lambda **kw: FakeListener(**kw),
+            lock_path=tmp_path / "armed.lock",
+        )
+        daemon.start()
+        try:
+            path.write_text(
+                "name: live\ndescription: edited\n"
+                "triggers:\n- kind: key\n  code: Q\n"
+                "steps:\n- action: {op: tap, target: b}\n"
+            )
+            assert daemon.check_reload() is True
+            sink = daemon._sink
+            assert isinstance(sink, RecordingSink)
+            daemon.handle_event(_key_event(KEY_Q, 1))
+            assert sink.taps == [KEY_B]
+        finally:
+            daemon.stop()
