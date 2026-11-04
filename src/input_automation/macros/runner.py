@@ -77,6 +77,13 @@ class MacroRunner:
         """Feed a device event through the trigger engine."""
         self._engine.handle_event(event)
 
+    def close(self) -> None:
+        """Close the output sink (virtual uinput device) — releases any stuck keys."""
+        sink = self._orchestrator._sink
+        close = getattr(sink, "close", None)
+        if callable(close):
+            close()
+
     # -- internals ------------------------------------------------------------
 
     def _make_callback(self, name: str) -> Callable[[str], None]:

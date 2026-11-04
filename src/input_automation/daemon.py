@@ -240,6 +240,15 @@ class MacroDaemon:
                 listener.stop()
             except Exception as exc:  # noqa: BLE001 - listener teardown must not kill the GUI
                 self.last_error = f"listener stop failed: {exc}"
+        # close the virtual uinput device so no injected key can stay stuck
+        # after disarm (e.g. a macro that pressed a key without releasing)
+        runner = self._runner
+        self._runner = None
+        if runner is not None:
+            try:
+                runner.close()
+            except Exception as exc:  # noqa: BLE001 - never crash on teardown
+                self.last_error = (self.last_error or "") + f"; sink close failed: {exc}"
         self._release_lock()
 
     def _watch_files_loop(self) -> None:
