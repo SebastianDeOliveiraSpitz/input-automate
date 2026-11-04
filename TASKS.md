@@ -6,7 +6,7 @@
 - [x] R2: CLI stub: `input-automation --version`, `input-automation project new|open|validate|run`
 
 ## M1 — Pure Python logic engine (SPS core)
-- [ ] T1: Block base class + pin model (input/output, typed), block registry
+- [x] T1: Block base class + pin model (input/output, typed), block registry
 - [ ] T2: Wire graph: add/remove connections, cycle detection, topological sort
 - [ ] T3: Cyclic scan executor: read inputs → execute blocks → write outputs, configurable cycle time, deterministic
 - [ ] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
