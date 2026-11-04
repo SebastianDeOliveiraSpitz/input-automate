@@ -1,52 +1,37 @@
 # TASKS.md
 
-## M1 — Foundation
+## M0 — Project rework foundation
+- [ ] R0: New project layout: `src/input_automation/{engine, io, gui, cli, project}`; keep pytest/ruff/mypy config; all gates green on empty scaffold
+- [ ] R1: Pydantic project schema: blocks, pins, wires, project document, round-trip YAML/JSON tests
+- [ ] R2: CLI stub: `input-automation --version`, `input-automation project new|open|validate|run`
 
-- [x] T1: Scaffold project: pyproject.toml, src/input_automation layout, pytest/ruff/mypy config, CLI stub (`input-automation --version`), all gates green
-- [x] T2: Macro schema: Pydantic models for triggers/actions, YAML loader + validation with clear error messages, round-trip tests
-- [x] T3: Device discovery: enumerate /dev/input via evdev, device info API, CLI `list-devices`
+## M1 — Pure Python logic engine (SPS core)
+- [ ] T1: Block base class + pin model (input/output, typed), block registry
+- [ ] T2: Wire graph: add/remove connections, cycle detection, topological sort
+- [ ] T3: Cyclic scan executor: read inputs → execute blocks → write outputs, configurable cycle time, deterministic
+- [ ] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
+- [ ] T5: Compare blocks: `==`, `!=`, `<`, `>`, threshold; pass-through/mux
+- [ ] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
 
-## M2 — Input capture & output
+## M2 — IO layer
+- [ ] T7: evdev input block: read device key/button/axis state into a pin
+- [ ] T8: uinput output block: write pin state to virtual keyboard/mouse output
+- [ ] T9: Screen capture block: PipeWire portal frame → OpenCV region measurement (color/threshold) → pin
+- [ ] T10: Mock IO providers for headless testing (no real devices needed)
 
-- [x] T4: Device listener: evdev event loop, normalized event model (key/mouse/axis), CLI `monitor`
-- [x] T5: Virtual output device: uinput wrapper (move/click/scroll/keys), udev rule + permission check, CLI `test-output`
-- [x] T6: Trigger engine: event pattern matching (sequences, holds, combos) wired to macro defs, synthetic-event tests
+## M3 — GUI canvas (SPS editor)
+- [ ] T11: PySide6 `QGraphicsView` 2D canvas; block palette (draggable function blocks)
+- [ ] T12: Drag blocks onto canvas, position freely; block properties panel (edit parameters)
+- [ ] T13: Draw connections between output pins and input pins; visual wires; delete/rewire
+- [ ] T14: Run/stop toggle; live pin-value monitoring on the canvas (show true/false or numbers on pins)
+- [ ] T15: Save/open project files from the GUI; recent projects
 
-## M3 — Visual layer
+## M4 — Integration & polish
+- [ ] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput
+- [ ] T17: README: install, GUI usage, block reference with wiring examples, troubleshooting, dev section
+- [ ] T18: Packaging: pipx-installable from GitHub release tags; system-setup.sh idempotent
 
-- [x] T7: Capture abstraction: Frame model (numpy BGR), CaptureBackend protocol, mock backend with animated bar pattern, CLI `screenshot`
-- [x] T7b: PipeWire portal backend: GNOME portal screencast → continuous frames; needs a real GNOME session (mgmt-vm GNOME install or fedora1) — mutter (unattended) flow verified live (pipeline reaches PLAYING, 3/3 repro green); portal (dialog) variant implemented but needs one interactive grant
-- [x] T8: OpenCV primitives: region crop, template match, color thresholds, bar-fraction measurement — pure functions + fixture tests
-- [x] T9: Visual trigger engine: watch rules (region + condition → trigger), debouncing, wired to trigger engine — color rules with rising-edge firing + per-rule debounce_ms, injectable clock; callback contract matches TriggerEngine (T10 wires both to actions)
-
-## M4 — Macros end-to-end
-
-- [x] T10: Macro orchestrator: step-tree execution (action/if/while/set), dry-run mode, JSONL execution log, repeat replay; MacroRunner binds macro triggers to device events; examples/volume.yaml E2E-tested
-- [x] T11: Python escape hatch: MacroBuilder API + load_python_macro; build(m) convention, stem default name, schema validated at build(); load_macros picks up *.py alongside YAML
-- [x] T12: Recording & replay: Recorder converts evdev events -> macro (tap/hold inferred from gaps, motion accumulation, click, speed factor); dump_macro YAML round-trip; drag recordings fail loudly (not expressible)
-- [x] T13: CLI polish: full surface (`macros list/validate/run`, `devices`, `capture`, `analyze`, `record`), `--json` outputs
-
-## M5 — GUI
-
-- [x] T14: PySide6 app shell: main window, tray, device/macro lists (pytest-qt testable) — MainWindow with injectable providers, NullSink moved to orchestrator, CLI `gui` command; default macro dir ~/.config/input-automate/macros
-- [x] T15: Macro editor: YAML ↔ form editor, visual region picker on live frames, test-run button — MacroEditorDialog (YAML pane is source of truth; form regenerates YAML; complex if/while/set steps locked to the YAML pane), RegionPickerDialog — freeze-frame fullscreen overlay: grabs ONE real-screen frame (grab_first_frame: mutter first, mock fallback) then covers the screen, drag → frame-pixel x,y,w,h; editor Save validates + writes, Test run (dry) via NullSink; main window: double-click edits, New macro, Pick region. Note: D-Bus screencast flows run on a thread-default GLib context in a worker thread — Qt's GLib integration owns the default main context, so a background MainLoop on the default context deadlocks signal delivery (fixed by pumping the thread-default context; verified live with Qt running)
-- [x] T16: Packaging + docs: README (install, CLI/GUI usage, macro YAML reference incl. schema-validated example, recording, troubleshooting, dev section), desktop entry install/input-automation.desktop installed idempotently by system-setup.sh (step 4), udev rule script pre-existing
-
-## M6 — Visual macro editor (post-v1, decided 2026-11-03)
-
-Concept decision: the declarative macro model (YAML) stays the source of truth;
-editors are generators for it. A free-form 2D node graph is out of scope —
-macros are control flow (a tree), not dataflow, so wire-routing/auto-layout
-would buy nothing. Tile taxonomy maps 1:1 onto the existing schema
-(triggers, Action, IfStep/WhileStep/SetStep, WatchRule).
-
-- [x] T17: Tile outline editor: the app's main window opens on the tile tree — palette (Input/Logic/Timer/Output) with drag & drop (custom MIME) + double-click insert; QTreeWidget with Triggers/Steps section rows, if/while rendered with then/else/body branch rows, internal-move reordering + nesting, invalid mutations revert to the last good macro; inline config panel per tile (input tiles: device combo + key code + state); live YAML preview; Save (name follows file stem), Test run (dry), macro file combo, Devices dialog (moved off the main window), Pick region, YAML editor retained for power users; pytest-qt offscreen testable (test_gui_tile_editor.py)
-- [ ] T18 (optional, after dogfooding): Flowchart view of the same model — auto-laid-out tile graph on QGraphicsScene (top-down, if-branches fan out, edges computed, never hand-routed). Only if the outline view proves insufficient in real use.
-- Explicitly rejected: manual node-graph with free tile placement and wire dragging (high effort, wrong fit for control flow).
-
-## M7 — Always-on macro daemon
-
-The trigger bindings are currently only stored; nothing listens to devices
-between manual runs. Basti wants triggers to actually fire macros.
-
-- [ ] T19: Always-on macro daemon: DONE — daemon.py (MacroDaemon: arms every macro in the macro dir per-file tolerant, DeviceListener events → TriggerEngine → orchestrator, device field enforced per binding in the engine, hot-reload via mtime polling every 2 s, JSONL execution log under ~/.config/input-automate/logs/), CLI `daemon` command, systemd user unit install/input-automation-daemon.service installed idempotently by system-setup.sh (not auto-enabled). Verified live on mgmt-vm: daemon armed 1 macro and fired it on a real Q-press (executions.jsonl). REMAINING: GUI armed/stopped indicator (systemctl status in the tile editor toolbar).
+## Post-v1 (optional)
+- [ ] Ladder-logic view alternative to FBD
+- [ ] Block library export/import (share projects)
+- [ ] Online edit (rewire while running)
