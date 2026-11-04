@@ -154,6 +154,15 @@ def test_registry_rejects_non_block() -> None:
         registry.register("NOTABLOCK", int)  # type: ignore[arg-type]
 
 
-def test_default_registry_starts_empty() -> None:
-    assert "AND" not in default_registry.names()
-    assert default_registry.names() == []
+def test_fresh_registry_starts_empty() -> None:
+    assert BlockRegistry().names() == []
+
+
+def test_default_registry_contains_function_blocks() -> None:
+    names = default_registry.names()
+    for name in ("AND", "OR", "NOT", "XOR", "SR", "TON", "CTU"):
+        assert name in names
+    # and they instantiate through the registry
+    for name in names:
+        block = default_registry.create(name, "t")
+        assert isinstance(block, Block)
