@@ -59,6 +59,7 @@ keyboard/mouse) plus internal signals.
   mock IO providers for tests.
 - Never log raw input device data or keystroke contents; macro/event data may be
   logged in sanitized form only.
-- Do not edit `AGENTS.md` or `TASKS.md` without Basti's approval (project
-  constitution — the dev agent treats them as read-only).
+- Do not edit `AGENTS.md` (project constitution — read-only).
+- `TASKS.md` is the living task list maintained by the dev agent: mark tasks
+  done (`- [ ]` → `- [x]`), add new ones, remove obsolete ones each tick.
 - No ansible playbooks (that is Basti's separate repo).

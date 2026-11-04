@@ -1,8 +1,8 @@
 # TASKS.md
 
 ## M0 — Project rework foundation
-- [ ] R0: New project layout: `src/input_automation/{engine, io, gui, cli, project}`; keep pytest/ruff/mypy config; all gates green on empty scaffold
-- [ ] R1: Pydantic project schema: blocks, pins, wires, project document, round-trip YAML/JSON tests
+- [x] R0: New project layout: `src/input_automation/{engine, io, gui, cli, project}`; keep pytest/ruff/mypy config; all gates green on empty scaffold
+- [x] R1: Pydantic project schema: blocks, pins, wires, project document, round-trip YAML/JSON tests
 - [ ] R2: CLI stub: `input-automation --version`, `input-automation project new|open|validate|run`
 
 ## M1 — Pure Python logic engine (SPS core)
