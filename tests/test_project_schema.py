@@ -98,7 +98,10 @@ def test_wire_requires_output_to_input() -> None:
     ]
     document = {
         "name": "bad",
-        "blocks": [{"id": "a", "type": "AND", "pins": pins}, {"id": "b", "type": "AND", "pins": pins}],
+        "blocks": [
+            {"id": "a", "type": "AND", "pins": pins},
+            {"id": "b", "type": "AND", "pins": pins},
+        ],
         "wires": [{"src_block": "a", "src_pin": "IN1", "dst_block": "b", "dst_pin": "Q"}],
     }
     with pytest.raises(ValueError, match="is an input, not an output"):
