@@ -70,10 +70,12 @@ class OutputSink(Protocol):
 
 
 def _resolve_key(target: str) -> int:
-    """Map a key name like ``'a'`` to its evdev code (``KEY_A`` = 30)."""
+    """Map a key name like ``'q'`` or ``'KEY_Q'`` to its evdev code."""
     name = target.strip().upper()
     if not name.isidentifier():
         raise ValueError(f"invalid key target {target!r}")
+    if name.startswith("KEY_"):
+        name = name[4:]
     code = getattr(ecodes, f"KEY_{name}", None)
     if code is None:
         raise ValueError(f"unknown key target {target!r}")

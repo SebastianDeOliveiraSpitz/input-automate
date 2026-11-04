@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from evdev import ecodes
 
 from input_automation.macros.models import (
     Action,
@@ -213,3 +214,37 @@ class TestJsonlLog:
         events = [json.loads(line) for line in log_path.read_text().splitlines()]
         assert events[-1]["event"] == "end"
         assert events[-1]["status"] == "error"
+
+
+class TestKeyCodeResolution:
+    """Key/button code strings accept both bare and prefixed forms."""
+
+    def test_resolve_key_bare_and_prefixed(self) -> None:
+        from input_automation.macros.orchestrator import _resolve_key
+
+        assert _resolve_key("q") == _resolve_key("KEY_Q") == ecodes.KEY_Q
+        assert _resolve_key("a") == _resolve_key("KEY_A") == ecodes.KEY_A
+
+    def test_resolve_key_unknown_raises(self) -> None:
+        from input_automation.macros.orchestrator import _resolve_key
+
+        with pytest.raises(ValueError, match="unknown key target"):
+            _resolve_key("zzz")
+        with pytest.raises(ValueError, match="unknown key target"):
+            _resolve_key("KEY_ZZZ")
+
+    def test_resolve_button_bare_and_prefixed(self) -> None:
+        from input_automation.macros.runner import _resolve_trigger_code
+
+        assert _resolve_trigger_code("button", "left") == _resolve_trigger_code(
+            "button", "BTN_LEFT"
+        ) == ecodes.BTN_LEFT
+        assert _resolve_trigger_code("button", "right") == _resolve_trigger_code(
+            "button", "BTN_RIGHT"
+        ) == ecodes.BTN_RIGHT
+
+    def test_resolve_button_unknown_raises(self) -> None:
+        from input_automation.macros.runner import _resolve_trigger_code
+
+        with pytest.raises(ValueError, match="unknown button code"):
+            _resolve_trigger_code("button", "btn_zzz")

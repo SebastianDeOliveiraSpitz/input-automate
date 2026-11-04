@@ -30,6 +30,8 @@ def _resolve_trigger_code(kind: str, code: str) -> int:
         return _resolve_key(code)
     if kind == "button":
         name = code.strip().upper()
+        if name.startswith("BTN_"):
+            name = name[4:]
         value = getattr(ecodes, f"BTN_{name}", None)
         if value is None:
             raise ValueError(f"unknown button code {code!r}")
