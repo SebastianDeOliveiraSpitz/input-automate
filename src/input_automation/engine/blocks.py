@@ -1,8 +1,9 @@
-"""Basic function blocks for the cyclic scan engine (T4).
+"""Basic function blocks for the cyclic scan engine (T4/T5).
 
-Combinational blocks: AND, OR, XOR, NOT.
+Combinational blocks: AND, OR, XOR, NOT, EQ, NE, LT, GT, THRESHOLD.
 Sequential blocks: SR (SET/RESET flip-flop), TON (on-delay timer), CTU (up
 counter).
+Signal blocks: PASS (pass-through), MUX (2:1 multiplexer).
 
 All blocks are headless-testable: no GUI or IO dependencies, all configuration
 flows through typed pins, and every block registers itself in
@@ -20,12 +21,35 @@ from input_automation.project.pins import PinDirection, PinDType
 __all__ = [
     "ANDBlock",
     "CTUBlock",
+    "EQBlock",
+    "GTBlock",
+    "LTBlock",
+    "MUXBlock",
+    "NEBlock",
     "NOTBlock",
     "ORBlock",
+    "PassThroughBlock",
     "SRBlock",
+    "ThresholdBlock",
     "TONBlock",
     "XORBlock",
 ]
+
+
+def _pin_float(value: bool | int | float | str | None) -> float | None:
+    """Return a FLOAT pin's value as a float, or ``None`` if unwired.
+
+    FLOAT pins only ever store int/float (bool and str are rejected by
+    :meth:`Pin.set`), so this narrows the pin value type for the
+    comparison operators.
+    """
+    if (
+        value is None
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+    ):
+        return None
+    return float(value)
 
 
 class ANDBlock(Block):
@@ -214,6 +238,144 @@ class CTUBlock(Block):
         self.output("CV").set(self._cv)
 
 
+class EQBlock(Block):
+    """Output Q is true when IN1 == IN2 (numeric comparison).
+
+    Unwired inputs read as having no value: if either input is unwired,
+    Q is false.
+    """
+
+    type_name = "EQ"
+    input_pins = (
+        Pin("IN1", PinDirection.INPUT, PinDType.FLOAT),
+        Pin("IN2", PinDirection.INPUT, PinDType.FLOAT),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),)
+
+    def evaluate(self) -> None:
+        a = self.input("IN1").value
+        b = self.input("IN2").value
+        self.output("Q").set(a is not None and b is not None and bool(a == b))
+
+
+class NEBlock(Block):
+    """Output Q is true when IN1 != IN2 (numeric comparison).
+
+    Unwired inputs read as having no value: if either input is unwired,
+    Q is false.
+    """
+
+    type_name = "NE"
+    input_pins = (
+        Pin("IN1", PinDirection.INPUT, PinDType.FLOAT),
+        Pin("IN2", PinDirection.INPUT, PinDType.FLOAT),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),)
+
+    def evaluate(self) -> None:
+        a = self.input("IN1").value
+        b = self.input("IN2").value
+        self.output("Q").set(a is not None and b is not None and bool(a != b))
+
+
+class LTBlock(Block):
+    """Output Q is true when IN1 < IN2 (numeric comparison).
+
+    Unwired inputs read as having no value: if either input is unwired,
+    Q is false.
+    """
+
+    type_name = "LT"
+    input_pins = (
+        Pin("IN1", PinDirection.INPUT, PinDType.FLOAT),
+        Pin("IN2", PinDirection.INPUT, PinDType.FLOAT),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),)
+
+    def evaluate(self) -> None:
+        a = _pin_float(self.input("IN1").value)
+        b = _pin_float(self.input("IN2").value)
+        if a is None or b is None:
+            self.output("Q").set(False)
+            return
+        self.output("Q").set(bool(a < b))
+
+
+class GTBlock(Block):
+    """Output Q is true when IN1 > IN2 (numeric comparison).
+
+    Unwired inputs read as having no value: if either input is unwired,
+    Q is false.
+    """
+
+    type_name = "GT"
+    input_pins = (
+        Pin("IN1", PinDirection.INPUT, PinDType.FLOAT),
+        Pin("IN2", PinDirection.INPUT, PinDType.FLOAT),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),)
+
+    def evaluate(self) -> None:
+        a = _pin_float(self.input("IN1").value)
+        b = _pin_float(self.input("IN2").value)
+        if a is None or b is None:
+            self.output("Q").set(False)
+            return
+        self.output("Q").set(bool(a > b))
+
+
+class ThresholdBlock(Block):
+    """Output Q is true when IN >= LIMIT (threshold crossed).
+
+    Unwired inputs read as having no value: if either input is unwired,
+    Q is false.
+    """
+
+    type_name = "THRESHOLD"
+    input_pins = (
+        Pin("IN", PinDirection.INPUT, PinDType.FLOAT),
+        Pin("LIMIT", PinDirection.INPUT, PinDType.FLOAT),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),)
+
+    def evaluate(self) -> None:
+        value = _pin_float(self.input("IN").value)
+        limit = _pin_float(self.input("LIMIT").value)
+        if value is None or limit is None:
+            self.output("Q").set(False)
+            return
+        self.output("Q").set(bool(value >= limit))
+
+
+class PassThroughBlock(Block):
+    """Output Q follows IN unchanged (buffer / signal pass-through)."""
+
+    type_name = "PASS"
+    input_pins = (Pin("IN", PinDirection.INPUT, PinDType.FLOAT),)
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.FLOAT),)
+
+    def evaluate(self) -> None:
+        self.output("Q").set(self.input("IN").value)
+
+
+class MUXBlock(Block):
+    """2:1 multiplexer: Q is IN2 while SEL is true, otherwise IN1."""
+
+    type_name = "MUX"
+    input_pins = (
+        Pin("SEL", PinDirection.INPUT, PinDType.BOOL),
+        Pin("IN1", PinDirection.INPUT, PinDType.FLOAT),
+        Pin("IN2", PinDirection.INPUT, PinDType.FLOAT),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.FLOAT),)
+
+    def evaluate(self) -> None:
+        sel = bool(self.input("SEL").value)
+        self.output("Q").set(
+            self.input("IN2").value if sel else self.input("IN1").value
+        )
+
+
 default_registry.register("AND", ANDBlock)
 default_registry.register("OR", ORBlock)
 default_registry.register("NOT", NOTBlock)
@@ -221,3 +383,10 @@ default_registry.register("XOR", XORBlock)
 default_registry.register("SR", SRBlock)
 default_registry.register("TON", TONBlock)
 default_registry.register("CTU", CTUBlock)
+default_registry.register("EQ", EQBlock)
+default_registry.register("NE", NEBlock)
+default_registry.register("LT", LTBlock)
+default_registry.register("GT", GTBlock)
+default_registry.register("THRESHOLD", ThresholdBlock)
+default_registry.register("PASS", PassThroughBlock)
+default_registry.register("MUX", MUXBlock)

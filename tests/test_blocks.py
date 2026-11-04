@@ -6,10 +6,17 @@ from input_automation.engine import (
     ANDBlock,
     BlockRegistry,
     CTUBlock,
+    EQBlock,
+    GTBlock,
+    LTBlock,
+    MUXBlock,
+    NEBlock,
     NOTBlock,
     ORBlock,
+    PassThroughBlock,
     PinDType,
     SRBlock,
+    ThresholdBlock,
     TONBlock,
     XORBlock,
     default_registry,
@@ -263,7 +270,22 @@ def test_ctu_reset_restores_previous_cu() -> None:
 
 def test_function_blocks_registered() -> None:
     names = default_registry.names()
-    for name in ("AND", "OR", "NOT", "XOR", "SR", "TON", "CTU"):
+    for name in (
+        "AND",
+        "OR",
+        "NOT",
+        "XOR",
+        "SR",
+        "TON",
+        "CTU",
+        "EQ",
+        "NE",
+        "LT",
+        "GT",
+        "THRESHOLD",
+        "PASS",
+        "MUX",
+    ):
         assert name in names
 
 
@@ -275,6 +297,17 @@ def test_function_block_pin_types() -> None:
     ctu = CTUBlock("c1")
     assert ctu.input("PV").dtype is PinDType.INT
     assert ctu.output("CV").dtype is PinDType.INT
+    eq = EQBlock("e1")
+    assert eq.input("IN1").dtype is PinDType.FLOAT
+    assert eq.output("Q").dtype is PinDType.BOOL
+    th = ThresholdBlock("th1")
+    assert th.input("IN").dtype is PinDType.FLOAT
+    assert th.input("LIMIT").dtype is PinDType.FLOAT
+    assert th.output("Q").dtype is PinDType.BOOL
+    mux = MUXBlock("m1")
+    assert mux.input("SEL").dtype is PinDType.BOOL
+    assert mux.input("IN1").dtype is PinDType.FLOAT
+    assert mux.output("Q").dtype is PinDType.FLOAT
 
 
 def test_fresh_registry_can_register_function_block() -> None:
@@ -282,3 +315,148 @@ def test_fresh_registry_can_register_function_block() -> None:
     registry.register("TON", TONBlock)
     block = registry.create("TON", "t1")
     assert isinstance(block, TONBlock)
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (5.0, 5.0, True),
+        (5.0, 3.0, False),
+        (3.0, 5.0, False),
+        (-1.0, -1.0, True),
+        (0, 0, True),
+        (0, 1, False),
+        (2, 2.0, True),
+    ],
+)
+def test_eq_truth_table(a: float, b: float, expected: bool) -> None:
+    block = EQBlock("e1")
+    _set(block, "IN1", a)
+    _set(block, "IN2", b)
+    block.evaluate()
+    assert _q(block) is expected
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (5.0, 5.0, False),
+        (5.0, 3.0, True),
+        (3.0, 5.0, True),
+    ],
+)
+def test_ne_truth_table(a: float, b: float, expected: bool) -> None:
+    block = NEBlock("n1")
+    _set(block, "IN1", a)
+    _set(block, "IN2", b)
+    block.evaluate()
+    assert _q(block) is expected
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (3.0, 5.0, True),
+        (5.0, 3.0, False),
+        (5.0, 5.0, False),
+    ],
+)
+def test_lt_truth_table(a: float, b: float, expected: bool) -> None:
+    block = LTBlock("l1")
+    _set(block, "IN1", a)
+    _set(block, "IN2", b)
+    block.evaluate()
+    assert _q(block) is expected
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (5.0, 3.0, True),
+        (3.0, 5.0, False),
+        (5.0, 5.0, False),
+    ],
+)
+def test_gt_truth_table(a: float, b: float, expected: bool) -> None:
+    block = GTBlock("g1")
+    _set(block, "IN1", a)
+    _set(block, "IN2", b)
+    block.evaluate()
+    assert _q(block) is expected
+
+
+def test_compare_unwired_input_is_false() -> None:
+    blocks = [EQBlock("e1"), NEBlock("n1"), LTBlock("l1"), GTBlock("g1")]
+    for block in blocks:
+        block.evaluate()
+        assert _q(block) is False
+    block = EQBlock("e2")
+    _set(block, "IN1", 5.0)
+    # IN2 unwired: Q stays false
+    block.evaluate()
+    assert _q(block) is False
+
+
+@pytest.mark.parametrize(
+    ("value", "limit", "expected"),
+    [
+        (5.0, 5.0, True),   # at threshold: on
+        (6.0, 5.0, True),   # above threshold: on
+        (4.0, 5.0, False),  # below threshold: off
+        (-1.0, 0.0, False),
+        (0.0, 0.0, True),
+    ],
+)
+def test_threshold(value: float, limit: float, expected: bool) -> None:
+    block = ThresholdBlock("th1")
+    _set(block, "IN", value)
+    _set(block, "LIMIT", limit)
+    block.evaluate()
+    assert _q(block) is expected
+
+
+def test_threshold_unwired_is_false() -> None:
+    block = ThresholdBlock("th1")
+    block.evaluate()
+    assert _q(block) is False
+    _set(block, "IN", 5.0)
+    # LIMIT unwired: Q stays false
+    block.evaluate()
+    assert _q(block) is False
+
+
+def test_passthrough_passes_value_through() -> None:
+    block = PassThroughBlock("p1")
+    _set(block, "IN", 3.5)
+    block.evaluate()
+    assert block.output("Q").value == 3.5
+
+
+def test_passthrough_passes_none_through() -> None:
+    block = PassThroughBlock("p1")
+    block.evaluate()
+    assert block.output("Q").value is None
+
+
+@pytest.mark.parametrize(
+    ("sel", "in1", "in2", "expected"),
+    [
+        (False, 1.0, 2.0, 1.0),
+        (True, 1.0, 2.0, 2.0),
+    ],
+)
+def test_mux_selects_input(sel: bool, in1: float, in2: float, expected: float) -> None:
+    block = MUXBlock("m1")
+    _set(block, "SEL", sel)
+    _set(block, "IN1", in1)
+    _set(block, "IN2", in2)
+    block.evaluate()
+    assert block.output("Q").value == expected
+
+
+def test_mux_unwired_sel_defaults_to_in1() -> None:
+    block = MUXBlock("m1")
+    _set(block, "IN1", 1.0)
+    _set(block, "IN2", 2.0)
+    block.evaluate()
+    assert block.output("Q").value == 1.0
