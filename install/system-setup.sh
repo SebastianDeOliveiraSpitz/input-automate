@@ -106,18 +106,6 @@ if [[ -f "${DESKTOP_SRC}" ]]; then
   fi
 fi
 
-# 5. systemd user unit for the always-on macro daemon (installed, NOT enabled)
-UNIT_SRC="${SCRIPT_DIR}/input-automation-daemon.service"
-SYSTEMD_DIR="$(getent passwd "${TARGET_USER}" | cut -d: -f6)/.config/systemd/user"
-if [[ -f "${UNIT_SRC}" ]]; then
-  mkdir -p "${SYSTEMD_DIR}"
-  if ! diff -q "${UNIT_SRC}" "${SYSTEMD_DIR}/input-automation-daemon.service" >/dev/null; then
-    install -m 0644 "${UNIT_SRC}" "${SYSTEMD_DIR}/input-automation-daemon.service"
-    systemctl --user daemon-reload 2>/dev/null || true
-    echo "installed ${SYSTEMD_DIR}/input-automation-daemon.service"
-    echo "enable it with:  systemctl --user enable --now input-automation-daemon"
-  fi
-fi
 
 echo "system setup complete"
 echo "next step:  pipx install git+https://github.com/SebastianDeOliveiraSpitz/input-automate.git@main"

@@ -28,7 +28,7 @@ New work goes in GitHub issues with `type:*`, `priority:*`, and `status:*` label
 - [x] C2: Remove legacy macro system
 - [x] C3: Remove legacy daemon
 - [ ] C4: Remove legacy capture/devices/output/triggers/vision modules
-- [ ] C5: Remove legacy CLI commands
-- [ ] C6: Remove legacy tests for removed modules
+- [x] C5: Remove legacy CLI commands
+- [x] C6: Remove legacy tests for removed modules
 
 Create GitHub issues for C1–C6 if you want the agent to complete them.
