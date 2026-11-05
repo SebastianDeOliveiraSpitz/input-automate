@@ -27,7 +27,7 @@
 - [x] T15: Save/open project files from the GUI; recent projects
 
 ## M4 — Integration & polish
-- [ ] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput
+- [x] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput
 - [ ] T17: README: install, GUI usage, block reference with wiring examples, troubleshooting, dev section
 - [ ] T18: Packaging: pipx-installable from GitHub release tags; system-setup.sh idempotent
 
