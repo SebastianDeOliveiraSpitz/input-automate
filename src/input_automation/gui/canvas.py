@@ -15,8 +15,11 @@ headless engine without opening any device or showing a window.
 from __future__ import annotations
 
 import contextlib
+import re
 from collections.abc import Sequence
 from functools import partial
+from itertools import chain
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import (
@@ -25,6 +28,7 @@ from PySide6.QtCore import (
     QMimeData,
     QPointF,
     QRectF,
+    QSettings,
     Qt,
     QTimer,
     Signal,
@@ -36,6 +40,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDockWidget,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGraphicsItem,
     QGraphicsLineItem,
@@ -47,6 +52,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QSpinBox,
     QStyle,
     QStyleOptionGraphicsItem,
@@ -66,6 +73,20 @@ from input_automation.engine.wires import (
     WireGraphError,
     WireTypeError,
 )
+from input_automation.project import (
+    Block as ProjectBlock,
+)
+from input_automation.project import (
+    Pin as ProjectPin,
+)
+from input_automation.project import (
+    Project,
+    load_project,
+    save_project,
+)
+from input_automation.project import (
+    Wire as ProjectWire,
+)
 from input_automation.project.pins import PinDirection, PinDType
 
 __all__ = [
@@ -82,6 +103,10 @@ BLOCK_MIME = "application/x-input-automation-block"
 
 RUN_CYCLE_MS = 50  # scan cycle period while the canvas is running (20 Hz)
 
+GUI_CONFIG_DIR = Path.home() / ".config" / "input-automate"
+SETTINGS_FILE = GUI_CONFIG_DIR / "gui.ini"
+PROJECT_FILE_FILTER = "Project files (*.yaml *.yml *.json)"
+
 BLOCK_WIDTH = 160
 TITLE_HEIGHT = 26
 PIN_ROW = 22
@@ -96,6 +121,93 @@ def _format_pin_value(value: bool | int | float | str | None) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def _project_name(stem: str) -> str:
+    """Derive a schema-valid project name from a file name stem."""
+    name = re.sub(r"[^A-Za-z0-9_-]", "_", stem)
+    name = re.sub(r"^[^A-Za-z0-9]+", "", name)
+    return name or "project"
+
+
+def canvas_to_project(canvas: BlockCanvas, name: str) -> Project:
+    """Serialize ``canvas`` as a :class:`Project` (validates the graph first)."""
+    graph = canvas.to_graph()
+    blocks: list[ProjectBlock] = []
+    for item in canvas.block_items():
+        block = graph.block(item.block_id)
+        pins: list[ProjectPin] = []
+        for pin in chain(block.inputs.values(), block.outputs.values()):
+            pins.append(
+                ProjectPin(
+                    name=pin.name,
+                    direction=pin.direction,
+                    dtype=pin.dtype,
+                    default=pin.value,
+                )
+            )
+        blocks.append(
+            ProjectBlock(
+                id=item.block_id,
+                type=item.type_name,
+                pins=pins,
+                parameters=dict(item.parameters),
+            )
+        )
+    wires = [
+        ProjectWire(
+            src_block=src_block,
+            src_pin=src_pin,
+            dst_block=dst_block,
+            dst_pin=dst_pin,
+        )
+        for src_block, src_pin, dst_block, dst_pin in canvas.wires()
+    ]
+    return Project(name=name, blocks=blocks, wires=wires)
+
+
+def project_to_canvas(project: Project, canvas: BlockCanvas) -> None:
+    """Paint ``project`` onto ``canvas``, replacing the current diagram."""
+    graph: WireGraph = WireGraph()
+    for pblock in project.blocks:
+        block = default_registry.create(pblock.type, pblock.id)
+        for ppin in pblock.pins:
+            try:
+                pin = block.input(ppin.name)
+            except KeyError:
+                pin = block.output(ppin.name)
+            if ppin.default is not None:
+                pin.set(ppin.default)
+        graph.add_block(block)
+    for pwire in project.wires:
+        graph.connect(
+            pwire.src_block, pwire.src_pin, pwire.dst_block, pwire.dst_pin
+        )
+    canvas.from_graph(graph)
+
+
+class RecentProjects:
+    """Most-recently opened or saved project paths, persisted in QSettings."""
+
+    MAX = 10
+
+    def __init__(self, settings: QSettings) -> None:
+        self._settings = settings
+
+    def paths(self) -> list[str]:
+        raw = self._settings.value("recent/projects", [])
+        return [str(path) for path in raw] if isinstance(raw, list) else []
+
+    def add(self, path: str | Path) -> None:
+        text = str(path)
+        paths = [p for p in self.paths() if p != text]
+        paths.insert(0, text)
+        self._settings.setValue("recent/projects", paths[: self.MAX])
+
+    def remove(self, path: str | Path) -> None:
+        text = str(path)
+        paths = [p for p in self.paths() if p != text]
+        self._settings.setValue("recent/projects", paths)
 
 
 class BlockItem(QGraphicsRectItem):
@@ -838,15 +950,24 @@ class PropertiesPanel(QWidget):
 
 
 class CanvasWindow(QMainWindow):
-    """Top-level window: palette dock + canvas + validate action (T11/T12 demo)."""
+    """Top-level window: palette dock + canvas, project save/open, validate, run/stop."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, settings: QSettings | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("input-automation — function block canvas")
         self._canvas = BlockCanvas()
         self._executor: ScanExecutor | None = None
         self._timer: QTimer | None = None
         self._cycle_count = 0
+        self._path: Path | None = None
+        self._dirty = False
+        GUI_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        self._settings = settings or QSettings(
+            str(SETTINGS_FILE), QSettings.Format.IniFormat
+        )
+        self._recent = RecentProjects(self._settings)
         self.setCentralWidget(self._canvas)
 
         palette = BlockPalette()
@@ -865,16 +986,26 @@ class CanvasWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, props_dock)
 
         bar = self.addToolBar("canvas")
-        new_act = QAction("New", self)
-        new_act.triggered.connect(self._canvas.clear)
+        self._new_act = QAction("New", self)
+        self._new_act.triggered.connect(self._new)
+        self._open_act = QAction("Open…", self)
+        self._open_act.triggered.connect(self._open)
+        self._save_act = QAction("Save", self)
+        self._save_act.triggered.connect(self._save)
         validate_act = QAction("Validate graph", self)
         validate_act.triggered.connect(self._validate)
         self._run_action = QAction("Run", self)
         self._run_action.setCheckable(True)
         self._run_action.triggered.connect(self._toggle_run)
-        bar.addAction(new_act)
+        bar.addAction(self._new_act)
+        bar.addAction(self._open_act)
+        bar.addAction(self._save_act)
+        bar.addSeparator()
         bar.addAction(validate_act)
         bar.addAction(self._run_action)
+        self._build_menu_bar()
+        self._canvas.graphChanged.connect(self._mark_dirty)
+        self._update_title()
         self.statusBar().showMessage(
             "Drag blocks from the palette; click an output pin, then an input pin to wire."
         )
@@ -935,6 +1066,122 @@ class CanvasWindow(QMainWindow):
         self._run_action.setChecked(False)
         self._run_action.setText("Run")
         self.statusBar().showMessage("stopped")
+
+    # -- project save / open ---------------------------------------------
+
+    def _build_menu_bar(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(self._new_act)
+        file_menu.addAction(self._open_act)
+        file_menu.addAction(self._save_act)
+        save_as_act = QAction("Save As…", self)
+        save_as_act.triggered.connect(self._save_as)
+        file_menu.addAction(save_as_act)
+        file_menu.addSeparator()
+        self._recent_menu: QMenu = file_menu.addMenu("Open Recent")
+        file_menu.addSeparator()
+        exit_act = QAction("Exit", self)
+        exit_act.triggered.connect(self.close)
+        file_menu.addAction(exit_act)
+        file_menu.aboutToShow.connect(self._refresh_recent_menu)
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        self._recent_menu.clear()
+        for path in self._recent.paths():
+            if not Path(path).exists():
+                continue
+            action = QAction(path, self)
+            action.setData(path)
+            action.triggered.connect(partial(self._open_path, Path(path)))
+            self._recent_menu.addAction(action)
+        if not self._recent_menu.actions():
+            empty = QAction("(no recent projects)", self)
+            empty.setEnabled(False)
+            self._recent_menu.addAction(empty)
+
+    def _start_dir(self) -> Path:
+        if self._path is not None and self._path.parent.exists():
+            return self._path.parent
+        projects_dir = GUI_CONFIG_DIR / "projects"
+        if projects_dir.exists():
+            return projects_dir
+        return Path.home()
+
+    def _open(self) -> None:
+        path, _selected = QFileDialog.getOpenFileName(
+            self, "Open project", str(self._start_dir()), PROJECT_FILE_FILTER
+        )
+        if not path:
+            return
+        self._open_path(Path(path))
+
+    def _open_path(self, path: Path) -> None:
+        try:
+            project = load_project(path)
+        except Exception as exc:  # noqa: BLE001 - show the failure in a dialog
+            QMessageBox.critical(self, "Open project", f"failed to load {path}:\n{exc}")
+            return
+        try:
+            project_to_canvas(project, self._canvas)
+        except Exception as exc:  # noqa: BLE001 - show the failure in a dialog
+            QMessageBox.critical(self, "Open project", f"failed to paint {path}:\n{exc}")
+            return
+        self._path = path
+        self._dirty = False
+        self._recent.add(path)
+        self._update_title()
+        self.statusBar().showMessage(
+            f"opened {path.name}: {len(project.blocks)} blocks, {len(project.wires)} wires",
+            3000,
+        )
+
+    def _save(self) -> bool:
+        if self._path is None:
+            return self._save_as()
+        try:
+            project = canvas_to_project(self._canvas, _project_name(self._path.stem))
+            save_project(project, self._path)
+        except Exception as exc:  # noqa: BLE001 - show the failure in a dialog
+            QMessageBox.critical(self, "Save project", f"failed to save {self._path}:\n{exc}")
+            return False
+        self._dirty = False
+        self._recent.add(self._path)
+        self._update_title()
+        self.statusBar().showMessage(f"saved {self._path}", 3000)
+        return True
+
+    def _save_as(self) -> bool:
+        path_str, _selected = QFileDialog.getSaveFileName(
+            self, "Save project", str(self._start_dir()), PROJECT_FILE_FILTER
+        )
+        if not path_str:
+            return False
+        path = Path(path_str)
+        if path.suffix.lower() not in (".yaml", ".yml", ".json"):
+            path = path.with_suffix(".yaml")
+        self._path = path
+        return self._save()
+
+    def _new(self) -> None:
+        self._canvas.clear()
+        self._path = None
+        self._dirty = False
+        self._update_title()
+        self.statusBar().showMessage("new project", 2000)
+
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+        self._update_title()
+
+    def _update_title(self) -> None:
+        name = self._path.stem if self._path else "untitled"
+        title = f"input-automation — function block canvas — {name}"
+        if self._path is None:
+            title += " (unsaved)"
+        if self._dirty:
+            title += " •"
+        self.setWindowTitle(title)
 
 
 def run() -> None:

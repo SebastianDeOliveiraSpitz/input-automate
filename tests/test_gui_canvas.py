@@ -5,8 +5,9 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPointF, Qt
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPointF, QSettings, Qt
 from PySide6.QtGui import QDrag, QDropEvent, QKeyEvent, QMouseEvent
+from PySide6.QtWidgets import QFileDialog
 
 from input_automation.engine.block import Block
 from input_automation.engine.registry import default_registry
@@ -23,7 +24,9 @@ from input_automation.gui.canvas import (
     BlockPalette,
     CanvasWindow,
     PropertiesPanel,
+    canvas_to_project,
 )
+from input_automation.project import save_project
 from input_automation.project.pins import PinDirection
 
 
@@ -562,3 +565,168 @@ class TestRunStop:
         assert win._executor is None
         assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
         assert "stopped" in win.statusBar().currentMessage().lower()
+
+
+class TestProjectSaveOpen:
+    def settings(self, tmp_path) -> QSettings:  # type: ignore[no-untyped-def]
+        return QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+
+    def test_project_name_from_stem(self) -> None:
+        from input_automation.gui.canvas import _project_name
+
+        assert _project_name("my demo v2") == "my_demo_v2"
+        assert _project_name("123") == "123"
+        assert _project_name("-leading") == "leading"
+        assert _project_name("") == "project"
+
+    def test_canvas_to_project_round_trip(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        canvas = win._canvas
+        canvas.add_block("TON", "t", parameters={"PT": 2.5, "DT": 0.1})
+        canvas.add_block("AND", "a")
+        canvas.add_wire("t", "Q", "a", "IN1")
+
+        project = canvas_to_project(canvas, "demo")
+        assert project.name == "demo"
+        assert {block.id for block in project.blocks} == {"t", "a"}
+        ton = next(block for block in project.blocks if block.id == "t")
+        assert ton.parameters == {"PT": 2.5, "DT": 0.1}
+        assert any(pin.name == "PT" and pin.default == 2.5 for pin in ton.pins)
+        assert [(w.src_block, w.src_pin, w.dst_block, w.dst_pin) for w in project.wires] == [
+            ("t", "Q", "a", "IN1")
+        ]
+
+    def test_canvas_to_project_rejects_invalid_graph(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a", parameters={"NOPE": 1})
+        with pytest.raises(UnknownPinError):
+            canvas_to_project(canvas, "bad")
+
+    def test_save_as_writes_file_and_clears_dirty(
+        self, qtbot, tmp_path, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        win._canvas.add_block("TON", "t", parameters={"PT": 2.5})
+        assert win._dirty
+
+        target = tmp_path / "demo.yaml"
+        monkeypatch.setattr(
+            QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(target), "")
+        )
+        assert win._save_as() is True
+        assert target.exists()
+        assert win._path == target
+        assert not win._dirty
+        assert "demo" in win.windowTitle()
+        assert "saved" in win.statusBar().currentMessage()
+
+        # re-saving an existing path must not open the dialog again
+        dialog_calls: list[tuple] = []
+        monkeypatch.setattr(
+            QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: dialog_calls.append(args) or ("", ""),
+        )
+        assert win._save() is True
+        assert dialog_calls == []
+        assert target.exists()
+
+    def test_save_as_cancel_keeps_unsaved(
+        self, qtbot, tmp_path, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        win._canvas.add_block("AND", "a")
+        monkeypatch.setattr(
+            QFileDialog, "getSaveFileName", lambda *args, **kwargs: ("", "")
+        )
+        assert win._save() is False
+        assert win._path is None
+        assert win._dirty
+        assert "unsaved" in win.windowTitle()
+
+    def test_open_action_loads_project(
+        self, qtbot, tmp_path, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        settings = self.settings(tmp_path)
+        win = CanvasWindow(settings=settings)
+        qtbot.addWidget(win)
+        win._canvas.add_block("TON", "t", parameters={"PT": 2.5})
+        target = tmp_path / "demo.yaml"
+        save_project(canvas_to_project(win._canvas, "demo"), target)
+
+        win2 = CanvasWindow(settings=settings)
+        qtbot.addWidget(win2)
+        monkeypatch.setattr(
+            QFileDialog,
+            "getOpenFileName",
+            lambda *args, **kwargs: (str(target), ""),
+        )
+        win2._open()
+        assert win2._path == target
+        assert set(win2._canvas.block_ids()) == {"t"}
+        # pin defaults (incl. the template's DT default) become parameters on reload
+        assert win2._canvas.block_item("t").parameters == {"PT": 2.5, "DT": 0.0}
+        assert not win2._dirty
+        assert "opened" in win2.statusBar().currentMessage()
+
+    def test_open_path_round_trip_preserves_parameters_and_wires(
+        self, qtbot, tmp_path
+    ) -> None:  # type: ignore[no-untyped-def]
+        settings = self.settings(tmp_path)
+        win = CanvasWindow(settings=settings)
+        qtbot.addWidget(win)
+        canvas = win._canvas
+        canvas.add_block("TON", "t", parameters={"PT": 2.5, "DT": 0.1})
+        canvas.add_block("AND", "a")
+        canvas.add_wire("t", "Q", "a", "IN1")
+
+        target = tmp_path / "demo.json"
+        win._path = target
+        assert win._save() is True
+
+        win2 = CanvasWindow(settings=settings)
+        qtbot.addWidget(win2)
+        win2._open_path(target)
+        assert win2._path == target
+        assert set(win2._canvas.block_ids()) == {"t", "a"}
+        assert win2._canvas.has_wire("t", "Q", "a", "IN1")
+        assert win2._canvas.block_item("t").parameters == {"PT": 2.5, "DT": 0.1}
+        assert not win2._dirty
+
+    def test_new_clears_canvas_and_path(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        win._canvas.add_block("AND", "a")
+        assert win._dirty
+        assert "unsaved" in win.windowTitle()
+
+        win._new()
+        assert win._canvas.block_ids() == []
+        assert win._canvas.wires() == []
+        assert win._path is None
+        assert not win._dirty
+        assert "untitled" in win.windowTitle()
+        assert "unsaved" in win.windowTitle()
+
+    def test_recent_projects_menu(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        settings = self.settings(tmp_path)
+        win = CanvasWindow(settings=settings)
+        qtbot.addWidget(win)
+        (tmp_path / "one.yaml").write_text("")
+        (tmp_path / "two.yaml").write_text("")
+        win._recent.add(str(tmp_path / "one.yaml"))
+        win._recent.add(str(tmp_path / "two.yaml"))
+        win._refresh_recent_menu()
+        texts = [action.text() for action in win._recent_menu.actions()]
+        assert texts == [str(tmp_path / "two.yaml"), str(tmp_path / "one.yaml")]
+
+        # missing files never appear in the menu
+        win._recent.add(str(tmp_path / "missing.yaml"))
+        win._refresh_recent_menu()
+        texts = [action.text() for action in win._recent_menu.actions() if action.isEnabled()]
+        assert str(tmp_path / "missing.yaml") not in texts
+        assert str(tmp_path / "two.yaml") in texts
