@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "input-automation"
-version = "0.1.0"
+version = "0.1.1"
 description = "Automate inputs on Linux (Wayland) with device- and vision-driven macros"
 readme = "README.md"
 requires-python = ">=3.12"
