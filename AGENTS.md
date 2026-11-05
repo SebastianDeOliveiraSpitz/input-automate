@@ -25,8 +25,7 @@ keyboard/mouse) plus internal signals.
    - Project persistence: YAML/JSON (block definitions + wiring)
 2. **IO layer** — evdev input, uinput output, PipeWire portal capture, OpenCV primitives.
    - Blocks declare which IO they need; the engine injects providers.
-3. **GUI** — PySide6 `QGraphicsView` 2D canvas, block palette, drag-drop,
-   connection drawing, properties panel, live pin-value monitoring, run/stop.
+3. **GUI** — PySide6 `QGraphicsView` 2D canvas (`CanvasWindow`) is the app's main window, with block palette, drag-drop, connection drawing, properties panel, live pin-value monitoring, run/stop. The legacy tile editor is retained for power users but is no longer the default.
 
 ## Stack
 
