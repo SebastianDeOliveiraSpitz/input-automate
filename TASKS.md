@@ -28,7 +28,7 @@
 
 ## M4 — Integration & polish
 - [x] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput
-- [ ] T17: README: install, GUI usage, block reference with wiring examples, troubleshooting, dev section
+- [x] T17: README: install, GUI usage, block reference with wiring examples, troubleshooting, dev section
 - [ ] T18: Packaging: pipx-installable from GitHub release tags; system-setup.sh idempotent
 
 ## Post-v1 (optional)
