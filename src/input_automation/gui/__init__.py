@@ -6,14 +6,10 @@ from input_automation.gui.canvas import (
     CanvasWindow,
     PropertiesPanel,
 )
-from input_automation.gui.tile_editor import DevicesDialog, TileEditorWindow, run
 
 __all__ = [
     "BlockCanvas",
     "BlockPalette",
     "CanvasWindow",
-    "DevicesDialog",
     "PropertiesPanel",
-    "TileEditorWindow",
-    "run",
 ]
