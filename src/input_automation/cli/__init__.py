@@ -2,6 +2,8 @@
 
 import contextlib
 import json
+import logging
+import sys
 import time
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -65,8 +67,19 @@ def main(
         is_eager=True,
         help="Show version and exit.",
     ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable debug logging to console (stderr) for troubleshooting.",
+    ),
 ) -> None:
     """Automate inputs on Linux (Wayland) with device- and vision-driven macros."""
+    if verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            stream=sys.stderr,
+        )
 
 
 @app.command("list-devices")
