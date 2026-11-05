@@ -17,7 +17,7 @@ from input_automation.engine.blocks import (
     TONBlock,
     XORBlock,
 )
-from input_automation.engine.io_blocks import InputBlock
+from input_automation.engine.io_blocks import InputBlock, OutputBlock
 from input_automation.engine.pins import Pin, PinTypeError
 from input_automation.engine.registry import BlockRegistry, default_registry
 from input_automation.engine.scan import (
@@ -50,6 +50,7 @@ __all__ = [
     "ScanExecutor",
     "InputReader",
     "InputBlock",
+    "OutputBlock",
     "OutputWriter",
     "Wire",
     "WireGraph",

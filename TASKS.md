@@ -15,7 +15,7 @@
 
 ## M2 — IO layer
 - [x] T7: evdev input block: read device key/button/axis state into a pin
-- [ ] T8: uinput output block: write pin state to virtual keyboard/mouse output
+- [x] T8: uinput output block: write pin state to virtual keyboard/mouse output
 - [ ] T9: Screen capture block: PipeWire portal frame → OpenCV region measurement (color/threshold) → pin
 - [ ] T10: Mock IO providers for headless testing (no real devices needed)
 
