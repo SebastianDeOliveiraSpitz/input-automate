@@ -1,4 +1,4 @@
-"""PySide6 GUI (M5/M6). The tile editor is the app's main window."""
+"""PySide6 GUI. The SPS/PLC canvas (CanvasWindow) is the app's main window."""
 
 from input_automation.gui.canvas import (
     BlockCanvas,

@@ -563,8 +563,8 @@ def analyze(
 
 @app.command()
 def gui() -> None:
-    """Open the PySide6 desktop GUI."""
-    from input_automation.gui import run
+    """Open the SPS/PLC visual programming GUI (drag-and-drop canvas)."""
+    from input_automation.gui.canvas import run
 
     run()
 
