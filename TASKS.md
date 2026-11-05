@@ -22,7 +22,7 @@
 ## M3 — GUI canvas (SPS editor)
 - [x] T11: PySide6 `QGraphicsView` 2D canvas; block palette (draggable function blocks)
 - [x] T12: Drag blocks onto canvas, position freely; block properties panel (edit parameters)
-- [ ] T13: Draw connections between output pins and input pins; visual wires; delete/rewire
+- [x] T13: Draw connections between output pins and input pins; visual wires; delete/rewire
 - [ ] T14: Run/stop toggle; live pin-value monitoring on the canvas (show true/false or numbers on pins)
 - [ ] T15: Save/open project files from the GUI; recent projects
 
