@@ -1,12 +1,11 @@
-"""Device input/output blocks for the scan engine (T7/T8).
+"""Device input/output blocks for the scan engine (T7/T8/T9).
 
-These blocks declare the pin interface between physical devices and the
-pure-Python engine. The engine layer stays IO-free: blocks never open devices themselves. An IO
-read provider (:class:`input_automation.io.evdev.EvdevInputProvider`) polls
-devices and writes input-block output pins before each cycle; an IO write
-provider (:class:`input_automation.io.uinput.UinputOutputProvider`) reads
-output-block input pins after each cycle and injects the events;
-:meth:`Block.evaluate` is a pass-through so wired values are current.
+These blocks declare the pin interface between physical devices / screen
+capture and the pure-Python engine. The engine layer stays IO-free: blocks
+never open devices themselves. IO read providers write input-block output
+pins before each cycle; IO write providers read output-block input pins after
+each cycle and drive the outside world; :meth:`Block.evaluate` is a
+pass-through so wired values are current.
 """
 
 from __future__ import annotations
@@ -84,5 +83,46 @@ class OutputBlock(Block):
         """Pass-through: nothing to compute; the provider drives the device."""
 
 
+class CaptureBlock(Block):
+    """Measure a captured screen region each cycle (T9).
+
+    Pins:
+    - ``REGION`` (string, in) -- ``"x,y,w,h"`` rectangle of the captured frame
+      to measure; empty = whole frame
+    - ``MODE`` (string, in) -- ``"color"`` (default): fraction of region
+      pixels matching ``COLOR`` within ``TOLERANCE``; ``"threshold"``: the
+      region's mean intensity as a fraction of 255
+    - ``COLOR`` (string, in) -- target BGR color ``"b,g,r"`` (color mode)
+    - ``TOLERANCE`` (int, in) -- per-channel tolerance around ``COLOR`` (0..255)
+    - ``LIMIT`` (float, in) -- ``Q`` is true while ``VALUE >= LIMIT``
+
+    Outputs:
+    - ``VALUE`` (float, out) -- measured fraction in ``[0, 1]``
+    - ``Q`` (bool, out) -- ``VALUE >= LIMIT``
+
+    The block never touches the screen.
+    :class:`input_automation.io.capture.CaptureInputProvider` grabs a frame
+    and writes ``VALUE``/``Q`` before each cycle; :meth:`evaluate` is a
+    pass-through so values wired from predecessors are current.
+    """
+
+    type_name = "CAPTURE"
+    input_pins = (
+        Pin("REGION", PinDirection.INPUT, PinDType.STRING, default=""),
+        Pin("MODE", PinDirection.INPUT, PinDType.STRING, default="color"),
+        Pin("COLOR", PinDirection.INPUT, PinDType.STRING, default=""),
+        Pin("TOLERANCE", PinDirection.INPUT, PinDType.INT, default=40),
+        Pin("LIMIT", PinDirection.INPUT, PinDType.FLOAT, default=0.5),
+    )
+    output_pins = (
+        Pin("VALUE", PinDirection.OUTPUT, PinDType.FLOAT),
+        Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),
+    )
+
+    def evaluate(self) -> None:
+        """Pass-through: nothing to compute; the provider drives the pins."""
+
+
 default_registry.register("INPUT", InputBlock)
 default_registry.register("OUTPUT", OutputBlock)
+default_registry.register("CAPTURE", CaptureBlock)
