@@ -11,7 +11,7 @@
 - [x] T3: Cyclic scan executor: read inputs → execute blocks → write outputs, configurable cycle time, deterministic
 - [x] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
 - [x] T5: Compare blocks: `==`, `!=`, `<`, `>`, threshold; pass-through/mux
-- [ ] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
+- [x] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
 
 ## M2 — IO layer
 - [ ] T7: evdev input block: read device key/button/axis state into a pin
