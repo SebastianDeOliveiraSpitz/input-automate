@@ -26,6 +26,7 @@ from PySide6.QtCore import (
     QPointF,
     QRectF,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
@@ -56,6 +57,7 @@ from PySide6.QtWidgets import (
 from input_automation.engine.block import Block
 from input_automation.engine.pins import Pin, PinTypeError
 from input_automation.engine.registry import default_registry
+from input_automation.engine.scan import ScanExecutor
 from input_automation.engine.wires import (
     DuplicateWireError,
     UnknownBlockError,
@@ -78,11 +80,22 @@ __all__ = [
 
 BLOCK_MIME = "application/x-input-automation-block"
 
+RUN_CYCLE_MS = 50  # scan cycle period while the canvas is running (20 Hz)
+
 BLOCK_WIDTH = 160
 TITLE_HEIGHT = 26
 PIN_ROW = 22
 PORT = 10
 PAD = 6
+
+
+def _format_pin_value(value: bool | int | float | str | None) -> str:
+    """Render a pin's current value for live monitoring (``None`` -> empty)."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 class BlockItem(QGraphicsRectItem):
@@ -103,6 +116,9 @@ class BlockItem(QGraphicsRectItem):
         self.output_pins = list(output_pins)
         self.parameters: dict[str, Any] = dict(parameters or {})
         self._canvas: BlockCanvas | None = None
+        self._pin_values: dict[
+            tuple[PinDirection, str], bool | int | float | str | None
+        ] = {}
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -152,6 +168,19 @@ class BlockItem(QGraphicsRectItem):
         center = self.port_rect(pin_name, direction).center()
         return self.scenePos() + center
 
+    def set_pin_values(
+        self, values: dict[tuple[PinDirection, str], bool | int | float | str | None]
+    ) -> None:
+        """Store live pin values (from the scan engine) and repaint."""
+        self._pin_values = dict(values)
+        self.update()
+
+    def pin_value(
+        self, direction: PinDirection, pin_name: str
+    ) -> bool | int | float | str | None:
+        """Return the last live value for ``direction`` + ``pin_name``."""
+        return self._pin_values.get((direction, pin_name))
+
     # -- painting ---------------------------------------------------------
 
     def paint(
@@ -192,7 +221,7 @@ class BlockItem(QGraphicsRectItem):
             painter.drawText(
                 QRectF(14, y - 10, rect.width() - 18, 20),
                 Qt.AlignmentFlag.AlignVCenter,
-                pin.name,
+                self._pin_label(PinDirection.INPUT, pin.name),
             )
         for index, pin in enumerate(self.output_pins):
             y = self._pin_center_y(index, len(self.output_pins))
@@ -203,8 +232,15 @@ class BlockItem(QGraphicsRectItem):
             painter.drawText(
                 QRectF(2, y - 10, BLOCK_WIDTH - PORT - 6, 20),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                pin.name,
+                self._pin_label(PinDirection.OUTPUT, pin.name),
             )
+
+    def _pin_label(self, direction: PinDirection, pin_name: str) -> str:
+        """``pin_name`` plus its live value, e.g. ``IN1 true`` or ``Q false``."""
+        value = self._pin_values.get((direction, pin_name))
+        if value is None:
+            return pin_name
+        return f"{pin_name} {_format_pin_value(value)}"
 
     def itemChange(
         self, change: QGraphicsItem.GraphicsItemChange, value: Any
@@ -609,6 +645,29 @@ class BlockCanvas(QGraphicsView):
                 )
             )
 
+    # -- live pin values --------------------------------------------------
+
+    def refresh_pin_values(self, graph: WireGraph) -> None:
+        """Write ``graph``'s current pin values onto the block items.
+
+        Called after every scan cycle while the canvas runs so the painted
+        pin values stay live. Blocks missing from ``graph`` keep their values.
+        """
+        for block_id, item in self._items.items():
+            try:
+                block = graph.block(block_id)
+            except UnknownBlockError:
+                continue
+            values: dict[
+                tuple[PinDirection, str], bool | int | float | str | None
+            ] = {}
+            for name, pin in block.inputs.items():
+                values[(PinDirection.INPUT, name)] = pin.value
+            for name, pin in block.outputs.items():
+                values[(PinDirection.OUTPUT, name)] = pin.value
+            item.set_pin_values(values)
+            item.update()
+
     # -- engine round trip ------------------------------------------------
 
     def to_graph(self) -> WireGraph:
@@ -785,6 +844,9 @@ class CanvasWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("input-automation — function block canvas")
         self._canvas = BlockCanvas()
+        self._executor: ScanExecutor | None = None
+        self._timer: QTimer | None = None
+        self._cycle_count = 0
         self.setCentralWidget(self._canvas)
 
         palette = BlockPalette()
@@ -807,8 +869,12 @@ class CanvasWindow(QMainWindow):
         new_act.triggered.connect(self._canvas.clear)
         validate_act = QAction("Validate graph", self)
         validate_act.triggered.connect(self._validate)
+        self._run_action = QAction("Run", self)
+        self._run_action.setCheckable(True)
+        self._run_action.triggered.connect(self._toggle_run)
         bar.addAction(new_act)
         bar.addAction(validate_act)
+        bar.addAction(self._run_action)
         self.statusBar().showMessage(
             "Drag blocks from the palette; click an output pin, then an input pin to wire."
         )
@@ -823,6 +889,52 @@ class CanvasWindow(QMainWindow):
             f"graph OK: {len(graph.blocks())} blocks, {len(graph.wires())} wires",
             5000,
         )
+
+    # -- run / stop -------------------------------------------------------
+
+    def _toggle_run(self, _checked: bool = False) -> None:
+        del _checked  # state is driven by _timer/_executor, not the action
+        if self._timer is not None:
+            self._stop_run()
+            return
+        try:
+            graph = self._canvas.to_graph()
+            graph.topological_order()  # refuse to run cyclic graphs
+        except Exception as exc:  # noqa: BLE001 - report in the status bar
+            self.statusBar().showMessage(f"invalid graph: {exc}", 5000)
+            return
+        self._executor = ScanExecutor(graph, cycle_time_s=RUN_CYCLE_MS / 1000)
+        self._cycle_count = 0
+        timer = QTimer(self)
+        timer.setInterval(RUN_CYCLE_MS)
+        timer.timeout.connect(self._run_cycle)
+        timer.start()
+        self._timer = timer
+        self._run_cycle()  # first cycle right away
+        self._run_action.setChecked(True)
+        self._run_action.setText("Stop")
+        self.statusBar().showMessage(f"running: {self._cycle_count} cycles")
+
+    def _run_cycle(self) -> None:
+        assert self._executor is not None
+        try:
+            self._executor.run_once()
+        except Exception as exc:  # noqa: BLE001 - stop cleanly, report in bar
+            self._stop_run()
+            self.statusBar().showMessage(f"run error: {exc}", 5000)
+            return
+        self._cycle_count += 1
+        self._canvas.refresh_pin_values(self._executor.graph)
+        self.statusBar().showMessage(f"running: {self._cycle_count} cycles")
+
+    def _stop_run(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        self._executor = None
+        self._run_action.setChecked(False)
+        self._run_action.setText("Run")
+        self.statusBar().showMessage("stopped")
 
 
 def run() -> None:

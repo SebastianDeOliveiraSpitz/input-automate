@@ -21,6 +21,7 @@ from input_automation.gui.canvas import (
     BLOCK_MIME,
     BlockCanvas,
     BlockPalette,
+    CanvasWindow,
     PropertiesPanel,
 )
 from input_automation.project.pins import PinDirection
@@ -469,3 +470,95 @@ class TestPropertiesPanel:
         canvas.block_item("t").setSelected(False)
         panel.set_block(canvas.selected_block())
         assert panel._editors == {}
+
+
+class TestRunStop:
+    def test_run_toggle_starts_and_stops_scan(self, qtbot) -> None:
+        win = CanvasWindow()
+        qtbot.addWidget(win)
+        win._canvas.add_block("AND", "a")
+
+        assert win._run_action.text() == "Run"
+        assert not win._run_action.isChecked()
+
+        win._run_action.trigger()
+
+        assert win._run_action.text() == "Stop"
+        assert win._run_action.isChecked()
+        assert win._executor is not None
+        assert win._timer is not None
+        assert win._timer.isActive()
+        # one cycle ran immediately
+        assert win._cycle_count == 1
+
+        win._run_action.trigger()
+
+        assert win._run_action.text() == "Run"
+        assert not win._run_action.isChecked()
+        assert win._executor is None
+        assert win._timer is None
+
+    def test_run_refuses_cyclic_graph(self, qtbot) -> None:
+        win = CanvasWindow()
+        qtbot.addWidget(win)
+        canvas = win._canvas
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        canvas.add_wire("a", "Q", "t", "IN")
+        canvas.add_wire("t", "Q", "a", "IN1")  # a -> t -> a cycle
+
+        win._run_action.trigger()
+
+        assert win._executor is None
+        assert win._timer is None
+        assert win._run_action.text() == "Run"
+        assert "cycle" in win.statusBar().currentMessage().lower()
+
+    def test_run_with_invalid_graph_reports_error(self, qtbot) -> None:
+        win = CanvasWindow()
+        qtbot.addWidget(win)
+        canvas = win._canvas
+        canvas.add_block("AND", "a", parameters={"NOPE": 1})  # unknown parameter
+
+        win._run_action.trigger()
+
+        assert win._executor is None
+        assert win._timer is None
+        assert win._run_action.text() == "Run"
+        assert "unknown parameter" in win.statusBar().currentMessage().lower()
+
+    def test_live_pin_values_update_while_running(self, qtbot) -> None:
+        win = CanvasWindow()
+        qtbot.addWidget(win)
+        canvas = win._canvas
+        canvas.add_block(
+            "INPUT", "btn", parameters={"DEVICE": "/dev/input/event0", "CODE": "KEY_Q"}
+        )
+        canvas.add_block("AND", "a")
+        canvas.add_wire("btn", "Q", "a", "IN1")
+        canvas.add_wire("btn", "Q", "a", "IN2")
+
+        win._run_action.trigger()
+
+        btn = canvas.block_item("btn")
+        aand = canvas.block_item("a")
+
+        win._run_cycle()
+        # no IO provider writes the input block's outputs -> Q stays None
+        assert btn.pin_value(PinDirection.OUTPUT, "Q") is None
+        assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
+
+        # simulate an IO provider publishing a new input value mid-run
+        win._executor.graph.block("btn").output("Q").set(True)
+        win._run_cycle()
+        assert aand.pin_value(PinDirection.OUTPUT, "Q") is True
+
+        win._executor.graph.block("btn").output("Q").set(False)
+        win._run_cycle()
+        assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
+
+        # stop keeps the last scanned values (they are stale, not live)
+        win._run_action.trigger()
+        assert win._executor is None
+        assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
+        assert "stopped" in win.statusBar().currentMessage().lower()
