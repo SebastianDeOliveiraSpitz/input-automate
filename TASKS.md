@@ -25,8 +25,8 @@ New work goes in GitHub issues with `type:*`, `priority:*`, and `status:*` label
 
 ## M5 — Legacy cleanup (pending, convert to issues)
 - [x] C1: Remove legacy tile editor GUI
-- [ ] C2: Remove legacy macro system
-- [ ] C3: Remove legacy daemon
+- [x] C2: Remove legacy macro system
+- [x] C3: Remove legacy daemon
 - [ ] C4: Remove legacy capture/devices/output/triggers/vision modules
 - [ ] C5: Remove legacy CLI commands
 - [ ] C6: Remove legacy tests for removed modules

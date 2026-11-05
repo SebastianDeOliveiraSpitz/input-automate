@@ -6,7 +6,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated
 
 import cv2
 import typer
@@ -19,13 +19,6 @@ from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
 from input_automation.io.evdev import EvdevInputProvider
 from input_automation.io.uinput import UinputOutputProvider
-from input_automation.macros import record_cli
-from input_automation.macros.loader import (
-    LoadError,
-    load_macro,
-    load_python_macro,
-)
-from input_automation.macros.orchestrator import MacroOrchestrator, NullSink
 from input_automation.output.virtual import (
     RecordingBackend,
     VirtualDevice,
@@ -40,11 +33,7 @@ from input_automation.vision.primitives import (
     template_match,
 )
 
-DAEMON_MACRO_DIR = Path.home() / ".config" / "input-automate" / "macros"
-
 app = typer.Typer(help="Automate inputs on Linux (Wayland).")
-macros_app = typer.Typer(help="List, validate, and run macros.")
-app.add_typer(macros_app, name="macros")
 
 project_app = typer.Typer(
     help="Create, inspect, validate, and run SPS project files (.yaml/.yml/.json)."
@@ -178,142 +167,7 @@ def test_output_cmd(
     typer.echo("test-output done")
 
 
-_DEFAULT_MACRO_DIR = Path("macros")
 _DEFAULT_SCREENSHOT = Path("screenshot.png")
-
-
-def _load_macro_by_suffix(path: Path) -> Any:
-    """Dispatch to the YAML or Python macro loader by file suffix."""
-    if path.suffix in (".yaml", ".yml"):
-        return load_macro(path)
-    return load_python_macro(path)
-
-
-@macros_app.command("list")
-def macros_list(
-    directory: Annotated[
-        Path, typer.Argument(help="Macro directory.")
-    ] = _DEFAULT_MACRO_DIR,
-    json_output: bool = typer.Option(False, "--json", help="Output JSON array."),
-) -> None:
-    """List macros in a directory (yaml and python)."""
-    macros: list[dict[str, object]] = []
-    warnings: list[str] = []
-    for pattern in ("*.yaml", "*.yml", "*.py"):
-        for path in sorted(directory.glob(pattern)):
-            try:
-                if path.suffix in (".yaml", ".yml"):
-                    macro = load_macro(path)
-                else:
-                    macro = load_python_macro(path)
-            except (LoadError, FileNotFoundError) as exc:
-                warnings.append(f"warning: {path.name}: {exc}")
-                continue
-            macros.append(
-                {
-                    "file": path.name,
-                    "name": macro.name,
-                    "description": macro.description,
-                    "triggers": [str(t.kind) for t in macro.triggers],
-                }
-            )
-    if json_output:
-        typer.echo(json.dumps(macros, indent=2))
-        return
-    if not macros:
-        typer.echo(f"no macros found in {directory}")
-    else:
-        for entry in macros:
-            trigger_kinds = cast("list[str]", entry["triggers"])
-            triggers = ",".join(trigger_kinds)
-            typer.echo(
-                f"{entry['file']}: {entry['name']} [{triggers}] {entry['description']}"
-            )
-    for warning in warnings:
-        typer.echo(warning, err=True)
-
-
-@macros_app.command("validate")
-def macros_validate(
-    path: Annotated[Path, typer.Argument(help="Macro file to validate.")],
-) -> None:
-    """Validate one macro file against the schema."""
-    try:
-        macro = _load_macro_by_suffix(path)
-        typer.echo(f"{path.name}: ok ({macro.name})")
-    except (LoadError, FileNotFoundError) as exc:
-        typer.echo(f"{path.name}: invalid macro: {exc}", err=True)
-        raise typer.Exit(1) from None
-
-
-@app.command()
-def record(
-    output: Annotated[Path, typer.Option("--output", "-o", help="YAML file to write.")],
-    from_events: Annotated[
-        Path | None,
-        typer.Option(
-            help="Convert a JSONL event dump (e.g. from `monitor --json`)"
-            " instead of recording live."
-        ),
-    ] = None,
-    trigger: str = typer.Option("F10", help="Key that stops a live recording (e.g. F10)."),
-    speed: float = typer.Option(1.0, min=0.1, help="Playback speed factor."),
-    min_gap_ms: int = typer.Option(50, min=1, help="Hold threshold in ms."),
-    device: Annotated[
-        list[str] | None, typer.Option(help="Device paths to record from (default: all).")
-    ] = None,
-    duration: float | None = typer.Option(
-        None, min=0.1, help="Stop recording after N seconds."
-    ),
-) -> None:
-    """Record input events into a replayable macro YAML file.
-
-    Press the --trigger key to stop a live recording. Use --from-events to
-    convert a previously captured JSONL event dump instead of a live device.
-    """
-    try:
-        macro = record_cli.record_macro(
-            output=output,
-            from_events=from_events,
-            trigger=trigger,
-            speed=speed,
-            min_gap_ms=min_gap_ms,
-            devices=device,
-            duration=duration,
-        )
-    except (FileNotFoundError, ValueError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from None
-    typer.echo(f"recorded {macro.name} -> {output} ({len(macro.steps)} steps)")
-
-
-@macros_app.command("run")
-def macros_run(
-    path: Annotated[Path, typer.Argument(help="Macro file to run.")],
-    dry_run: bool = typer.Option(False, "--dry-run", help="Walk the tree without injecting."),
-    repeat: int = typer.Option(1, "--repeat", min=1, help="How often to run."),
-) -> None:
-    """Run a macro once (or --repeat N times)."""
-    try:
-        macro = _load_macro_by_suffix(path)
-    except (LoadError, FileNotFoundError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from None
-    if dry_run:
-        orchestrator = MacroOrchestrator(sink=NullSink(), dry_run=True)
-        orchestrator.run(macro, repeat=repeat)
-        typer.echo(f"dry run: {macro.name} executed without injecting")
-        return
-    if not uinput_available():
-        typer.echo(
-            "error: /dev/uinput is not writable — run install/system-setup.sh",
-            err=True,
-        )
-        raise typer.Exit(1)
-    with VirtualDevice() as device:
-        orchestrator = MacroOrchestrator(sink=device)
-        orchestrator.run(macro, repeat=repeat)
-    typer.echo(f"ran {macro.name} x{repeat}")
 
 
 @project_app.command("new")
@@ -582,22 +436,7 @@ def gui() -> None:
     run()
 
 
-@app.command()
-def daemon(
-    macro_dir: Annotated[
-        Path, typer.Option("--macro-dir", help="Directory of macros to arm.")
-    ] = DAEMON_MACRO_DIR,
-) -> None:
-    """Run the always-on macro daemon: fire macros from device triggers.
 
-    Arms every macro in --macro-dir (OR-combined triggers per macro) and
-    listens to all input devices until interrupted. Hot-reloads macro
-    files every few seconds. Runs as your user — no sudo (it needs the
-    'input' group and /dev/uinput access, both from system-setup.sh).
-    """
-    from input_automation.daemon import run_daemon
-
-    run_daemon(macro_dir)
 
 
 def _capture_one_frame(backend_name: str, output: Path, json_output: bool) -> None:
