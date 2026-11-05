@@ -6,16 +6,16 @@
 - [x] R2: CLI stub: `input-automation --version`, `input-automation project new|open|validate|run`
 
 ## M1 — Pure Python logic engine (SPS core)
-- [ ] T1: Block base class + pin model (input/output, typed), block registry
-- [ ] T2: Wire graph: add/remove connections, cycle detection, topological sort
-- [ ] T3: Cyclic scan executor: read inputs → execute blocks → write outputs, configurable cycle time, deterministic
-- [ ] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
-- [ ] T5: Compare blocks: `==`, `!=`, `<`, `>`, threshold; pass-through/mux
-- [ ] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
+- [x] T1: Block base class + pin model (input/output, typed), block registry
+- [x] T2: Wire graph: add/remove connections, cycle detection, topological sort
+- [x] T3: Cyclic scan executor: read inputs → execute blocks → write outputs, configurable cycle time, deterministic
+- [x] T4: Basic function blocks: AND, OR, NOT, XOR, SET/RESET (flip-flop), TON timer, CTU counter
+- [x] T5: Compare blocks: `==`, `!=`, `<`, `>`, threshold; pass-through/mux
+- [x] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
 
 ## M2 — IO layer
-- [ ] T7: evdev input block: read device key/button/axis state into a pin
-- [ ] T8: uinput output block: write pin state to virtual keyboard/mouse output
+- [x] T7: evdev input block: read device key/button/axis state into a pin
+- [x] T8: uinput output block: write pin state to virtual keyboard/mouse output
 - [ ] T9: Screen capture block: PipeWire portal frame → OpenCV region measurement (color/threshold) → pin
 - [ ] T10: Mock IO providers for headless testing (no real devices needed)
 
