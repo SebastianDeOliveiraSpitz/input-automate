@@ -24,7 +24,7 @@
 - [x] T12: Drag blocks onto canvas, position freely; block properties panel (edit parameters)
 - [x] T13: Draw connections between output pins and input pins; visual wires; delete/rewire
 - [x] T14: Run/stop toggle; live pin-value monitoring on the canvas (show true/false or numbers on pins)
-- [ ] T15: Save/open project files from the GUI; recent projects
+- [x] T15: Save/open project files from the GUI; recent projects
 
 ## M4 — Integration & polish
 - [ ] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput
