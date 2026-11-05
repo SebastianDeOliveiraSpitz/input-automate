@@ -17,7 +17,7 @@
 - [x] T7: evdev input block: read device key/button/axis state into a pin
 - [x] T8: uinput output block: write pin state to virtual keyboard/mouse output
 - [x] T9: Screen capture block: PipeWire portal frame → OpenCV region measurement (color/threshold) → pin
-- [ ] T10: Mock IO providers for headless testing (no real devices needed)
+- [x] T10: Mock IO providers for headless testing (no real devices needed)
 
 ## M3 — GUI canvas (SPS editor)
 - [ ] T11: PySide6 `QGraphicsView` 2D canvas; block palette (draggable function blocks)

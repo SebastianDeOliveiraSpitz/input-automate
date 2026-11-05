@@ -49,7 +49,7 @@ class DeviceReader(Protocol):
 
 
 @dataclass(frozen=True)
-class _DeviceState:
+class DeviceState:
     device: DeviceReader
     key_codes: frozenset[int]
     abs_codes: frozenset[int]
@@ -88,7 +88,7 @@ class EvdevInputProvider:
         self._opener = open_device_fn or (
             lambda path: cast(DeviceReader, open_device(Path(path)))
         )
-        self._devices: dict[str, _DeviceState] = {}
+        self._devices: dict[str, DeviceState] = {}
 
     def close(self) -> None:
         """Close every cached device fd."""
@@ -134,7 +134,7 @@ class EvdevInputProvider:
 
     # -- internals --------------------------------------------------------
 
-    def _device_state(self, path: str) -> _DeviceState | None:
+    def _device_state(self, path: str) -> DeviceState | None:
         """Open and cache ``path``; return ``None`` if it cannot be opened."""
         state = self._devices.get(path)
         if state is not None:
@@ -145,7 +145,7 @@ class EvdevInputProvider:
         except OSError as exc:
             logger.debug("cannot open evdev device %s: %s", path, exc)
             return None
-        state = _DeviceState(
+        state = DeviceState(
             device=device,
             key_codes=frozenset(caps.get(ecodes.EV_KEY, [])),
             abs_codes=frozenset(caps.get(ecodes.EV_ABS, [])),
