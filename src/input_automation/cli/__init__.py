@@ -27,6 +27,7 @@ from input_automation.output.virtual import (
     uinput_available,
 )
 from input_automation.project import Project, load_project, save_project
+from input_automation.project.runner import ProjectRunError, run_project
 from input_automation.vision.primitives import (
     bar_fill_fraction,
     color_fraction,
@@ -375,20 +376,37 @@ def project_validate(
 @project_app.command("run")
 def project_run(
     path: Annotated[Path, typer.Argument(help="Project file to run headless.")],
+    cycles: Annotated[
+        int,
+        typer.Option(
+            "--cycles",
+            min=1,
+            help="Number of scan cycles to execute before exiting.",
+        ),
+    ] = 1,
 ) -> None:
-    """Headless run: load and validate the project (scan engine not yet implemented)."""
+    """Headless run: load the project, execute it through the scan engine,
+    print resulting output pin values, and exit."""
     try:
         project = load_project(path)
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"error: {path}: {exc}", err=True)
         raise typer.Exit(1) from None
+    try:
+        results = run_project(project, cycles=cycles)
+    except ProjectRunError as exc:
+        typer.echo(f"error: {exc.message}", err=True)
+        raise typer.Exit(1) from None
     typer.echo(
         f"project {project.name!r}: {len(project.blocks)} blocks, "
-        f"{len(project.wires)} wires"
+        f"{len(project.wires)} wires — ran {cycles} cycle(s)"
     )
-    typer.echo(
-        "headless scan engine not yet implemented (T1-T5); nothing executed"
-    )
+    for block_id in sorted(results):
+        outputs = results[block_id]
+        if not outputs:
+            continue
+        pin_values = ", ".join(f"{name}={value!r}" for name, value in outputs.items())
+        typer.echo(f"  {block_id}: {pin_values}")
 
 
 def _parse_color(spec: str) -> tuple[int, int, int]:

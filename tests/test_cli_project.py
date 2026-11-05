@@ -161,13 +161,98 @@ class TestProjectValidate:
 
 
 class TestProjectRun:
-    def test_run_reports_stub(self, tmp_path: Path) -> None:
+    def _and_project(self, tmp_path: Path, name: str = "demo") -> Path:
+        project = Project(
+            name=name,
+            blocks=[
+                Block(
+                    id="a1",
+                    type="AND",
+                    pins=[
+                        Pin(
+                            name="IN1",
+                            direction=PinDirection.INPUT,
+                            dtype=PinDType.BOOL,
+                            default=True,
+                        ),
+                        Pin(
+                            name="IN2",
+                            direction=PinDirection.INPUT,
+                            dtype=PinDType.BOOL,
+                            default=False,
+                        ),
+                        Pin(name="Q", direction=PinDirection.OUTPUT, dtype=PinDType.BOOL),
+                    ],
+                ),
+                Block(
+                    id="a2",
+                    type="AND",
+                    pins=[
+                        Pin(name="IN1", direction=PinDirection.INPUT, dtype=PinDType.BOOL),
+                        Pin(
+                            name="IN2",
+                            direction=PinDirection.INPUT,
+                            dtype=PinDType.BOOL,
+                            default=True,
+                        ),
+                        Pin(name="Q", direction=PinDirection.OUTPUT, dtype=PinDType.BOOL),
+                    ],
+                ),
+            ],
+            wires=[Wire(src_block="a1", src_pin="Q", dst_block="a2", dst_pin="IN1")],
+        )
         path = tmp_path / "demo.yaml"
-        _save(path)
+        save_project(project, path)
+        return path
+
+    def test_run_executes_and_reports_outputs(self, tmp_path: Path) -> None:
+        path = self._and_project(tmp_path)
         result = runner.invoke(app, ["project", "run", str(path)])
         assert result.exit_code == 0, result.output
-        assert "not yet implemented" in result.output
-        assert "nothing executed" in result.output
+        assert "ran 1 cycle(s)" in result.output
+        assert "a1: Q=False" in result.output
+        assert "a2: Q=False" in result.output
+
+    def test_run_cycles_option(self, tmp_path: Path) -> None:
+        path = self._and_project(tmp_path)
+        result = runner.invoke(app, ["project", "run", str(path), "--cycles", "3"])
+        assert result.exit_code == 0, result.output
+        assert "ran 3 cycle(s)" in result.output
+
+    def test_run_unknown_block_type_fails(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.yaml"
+        save_project(
+            Project(name="bad", blocks=[Block(id="x", type="NOPE", pins=[])]),
+            path,
+        )
+        result = runner.invoke(app, ["project", "run", str(path)])
+        assert result.exit_code != 0
+        assert "unknown block type" in result.output
+
+    def test_run_cycle_fails(self, tmp_path: Path) -> None:
+        pins = [
+            Pin(name="IN1", direction=PinDirection.INPUT, dtype=PinDType.BOOL),
+            Pin(name="IN2", direction=PinDirection.INPUT, dtype=PinDType.BOOL),
+            Pin(name="Q", direction=PinDirection.OUTPUT, dtype=PinDType.BOOL),
+        ]
+        path = tmp_path / "cyc.yaml"
+        save_project(
+            Project(
+                name="cyc",
+                blocks=[
+                    Block(id="a1", type="AND", pins=pins),
+                    Block(id="a2", type="AND", pins=pins),
+                ],
+                wires=[
+                    Wire(src_block="a1", src_pin="Q", dst_block="a2", dst_pin="IN1"),
+                    Wire(src_block="a2", src_pin="Q", dst_block="a1", dst_pin="IN1"),
+                ],
+            ),
+            path,
+        )
+        result = runner.invoke(app, ["project", "run", str(path)])
+        assert result.exit_code != 0
+        assert "cycle" in result.output.lower()
 
     def test_run_invalid_fails(self, tmp_path: Path) -> None:
         path = tmp_path / "bad.yaml"
