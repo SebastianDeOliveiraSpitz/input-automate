@@ -35,6 +35,7 @@ OUTPUT = PinDirection.OUTPUT
 BOOL = PinDType.BOOL
 INT = PinDType.INT
 FLOAT = PinDType.FLOAT
+STRING = PinDType.STRING
 
 
 def _schema_pin(name, direction, dtype, default=None):
@@ -202,3 +203,71 @@ def test_run_uses_custom_registry() -> None:
         wires=[],
     )
     assert run_project(project, registry=registry) == {"c1": {"Q": True}}
+
+
+def test_run_with_mock_io_providers() -> None:
+    """INPUT -> AND -> OUTPUT end to end with mock providers: no /dev/input,
+    no /dev/uinput, no privileges, deterministic.
+    """
+    from evdev import ecodes
+
+    from input_automation.io.mock import (
+        MockEvdevInputProvider,
+        MockUinputOutputProvider,
+    )
+
+    project = Project(
+        name="e2e",
+        blocks=[
+            _schema_block(
+                "in1",
+                "INPUT",
+                [
+                    _schema_pin("DEVICE", INPUT, STRING, default="/dev/input/event0"),
+                    _schema_pin("CODE", INPUT, STRING, default="KEY_Q"),
+                    _schema_pin("Q", OUTPUT, BOOL),
+                    _schema_pin("VALUE", OUTPUT, INT, default=0),
+                ],
+            ),
+            _schema_block(
+                "a1",
+                "AND",
+                [
+                    _schema_pin("IN1", INPUT, BOOL),
+                    _schema_pin("IN2", INPUT, BOOL, default=True),
+                    _schema_pin("Q", OUTPUT, BOOL),
+                ],
+            ),
+            _schema_block(
+                "out1",
+                "OUTPUT",
+                [
+                    _schema_pin("DEVICE", INPUT, STRING, default="out-kb"),
+                    _schema_pin("CODE", INPUT, STRING, default="KEY_A"),
+                    _schema_pin("Q", INPUT, BOOL, default=False),
+                    _schema_pin("VALUE", INPUT, INT, default=1),
+                ],
+            ),
+        ],
+        wires=[
+            Wire(src_block="in1", src_pin="Q", dst_block="a1", dst_pin="IN1"),
+            Wire(src_block="a1", src_pin="Q", dst_block="out1", dst_pin="Q"),
+        ],
+    )
+    evdev = MockEvdevInputProvider()
+    outputs = MockUinputOutputProvider()
+
+    evdev.press("/dev/input/event0", ecodes.KEY_Q)
+    results = run_project(project, cycles=1, read_inputs=evdev, write_outputs=outputs)
+    assert results["in1"] == {"Q": True, "VALUE": 1}
+    assert results["a1"] == {"Q": True}
+    assert results["out1"] == {}
+    assert outputs.device_events("out-kb") == [
+        ((ecodes.EV_KEY, ecodes.KEY_A), 1, True)
+    ]
+
+    evdev.release("/dev/input/event0", ecodes.KEY_Q)
+    results = run_project(project, cycles=1, read_inputs=evdev, write_outputs=outputs)
+    assert results["in1"] == {"Q": False, "VALUE": 0}
+    assert results["a1"] == {"Q": False}
+    assert ((ecodes.EV_KEY, ecodes.KEY_A), 0, True) in outputs.device_events("out-kb")

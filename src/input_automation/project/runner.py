@@ -20,6 +20,7 @@ from input_automation.engine import (
     default_registry,
 )
 from input_automation.engine.pins import PinTypeError
+from input_automation.engine.scan import InputReader, OutputWriter
 from input_automation.project import Block as SchemaBlock
 from input_automation.project import Project
 
@@ -99,8 +100,17 @@ def run_project(
     project: Project,
     cycles: int = 1,
     registry: BlockRegistry | None = None,
+    *,
+    read_inputs: InputReader | None = None,
+    write_outputs: OutputWriter | None = None,
 ) -> dict[str, dict[str, object]]:
     """Execute ``project`` for ``cycles`` scan cycles.
+
+    Optional ``read_inputs``/``write_outputs`` callables are injected into the
+    scan engine (e.g. the evdev and uinput IO providers) so a project with
+    INPUT/OUTPUT blocks talks to real devices; when omitted, input pins keep
+    their defaults and outputs are discarded. Mock providers keep this
+    headless-testable without any hardware.
 
     Returns a mapping ``block_id -> {output_pin_name: value}`` with the pin
     values after the last cycle. Raises :class:`ProjectRunError` on unknown
@@ -109,7 +119,11 @@ def run_project(
     if cycles < 1:
         raise ProjectRunError(f"cycles must be >= 1, got {cycles!r}")
     graph = build_graph(project, registry)
-    executor = ScanExecutor(graph)
+    executor = ScanExecutor(
+        graph,
+        read_inputs=read_inputs,
+        write_outputs=write_outputs,
+    )
     try:
         for _ in range(cycles):
             executor.run_once()

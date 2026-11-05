@@ -730,3 +730,59 @@ class TestProjectSaveOpen:
         texts = [action.text() for action in win._recent_menu.actions() if action.isEnabled()]
         assert str(tmp_path / "missing.yaml") not in texts
         assert str(tmp_path / "two.yaml") in texts
+
+
+class TestHeadlessRunFromCanvas:
+    """A diagram built on the canvas saves to a project file and runs
+    headless with mock IO providers — no /dev/input, no /dev/uinput (T16)."""
+
+    def test_canvas_diagram_runs_headless_with_io(
+        self, qtbot, tmp_path
+    ) -> None:  # type: ignore[no-untyped-def]
+        from pathlib import Path
+
+        from evdev import ecodes
+
+        from input_automation.io.mock import (
+            MockEvdevInputProvider,
+            MockUinputOutputProvider,
+        )
+        from input_automation.project import load_project, save_project
+        from input_automation.project.runner import run_project
+
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block(
+            "INPUT",
+            "in1",
+            parameters={"DEVICE": "/dev/input/event0", "CODE": "KEY_Q"},
+        )
+        canvas.add_block(
+            "AND",
+            "a1",
+            parameters={"IN2": True},
+        )
+        canvas.add_block(
+            "OUTPUT",
+            "out1",
+            parameters={"DEVICE": "out-kb", "CODE": "KEY_A"},
+        )
+        canvas.add_wire("in1", "Q", "a1", "IN1")
+        canvas.add_wire("a1", "Q", "out1", "Q")
+
+        path = Path(tmp_path) / "e2e.yaml"
+        save_project(canvas_to_project(canvas, "e2e"), path)
+
+        evdev = MockEvdevInputProvider()
+        outputs = MockUinputOutputProvider()
+        evdev.press("/dev/input/event0", ecodes.KEY_Q)
+        run_project(load_project(path), cycles=1, read_inputs=evdev, write_outputs=outputs)
+        assert outputs.device_events("out-kb") == [
+            ((ecodes.EV_KEY, ecodes.KEY_A), 1, True)
+        ]
+
+        evdev.release("/dev/input/event0", ecodes.KEY_Q)
+        run_project(load_project(path), cycles=1, read_inputs=evdev, write_outputs=outputs)
+        assert ((ecodes.EV_KEY, ecodes.KEY_A), 0, True) in outputs.device_events(
+            "out-kb"
+        )

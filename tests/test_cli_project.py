@@ -259,3 +259,37 @@ class TestProjectRun:
         path.write_text("name: bad name\n", encoding="utf-8")
         result = runner.invoke(app, ["project", "run", str(path)])
         assert result.exit_code != 0
+
+    def test_run_evdev_uinput_flags_wire_providers(self, monkeypatch, tmp_path) -> None:
+        created: list[str] = []
+
+        class FakeIn:
+            def __init__(self, **kwargs: object) -> None:
+                created.append("in")
+
+            def __call__(self, graph: object) -> None:
+                return None
+
+            def close(self) -> None:
+                created.append("in-close")
+
+        class FakeOut:
+            def __init__(self, **kwargs: object) -> None:
+                created.append("out")
+
+            def __call__(self, graph: object) -> None:
+                return None
+
+            def close(self) -> None:
+                created.append("out-close")
+
+        monkeypatch.setattr("input_automation.cli.EvdevInputProvider", FakeIn)
+        monkeypatch.setattr("input_automation.cli.UinputOutputProvider", FakeOut)
+
+        path = self._and_project(tmp_path)
+        result = runner.invoke(
+            app, ["project", "run", str(path), "--evdev", "--uinput"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "ran 1 cycle(s)" in result.output
+        assert created == ["in", "out", "in-close", "out-close"], created

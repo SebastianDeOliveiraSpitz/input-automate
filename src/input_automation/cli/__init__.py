@@ -1,5 +1,6 @@
 """CLI entry point for input-automation."""
 
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -14,6 +15,8 @@ from input_automation.capture.base import CaptureError
 from input_automation.capture.factory import BACKEND_NAMES, create_backend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
+from input_automation.io.evdev import EvdevInputProvider
+from input_automation.io.uinput import UinputOutputProvider
 from input_automation.macros import record_cli
 from input_automation.macros.loader import (
     LoadError,
@@ -384,19 +387,52 @@ def project_run(
             help="Number of scan cycles to execute before exiting.",
         ),
     ] = 1,
+    evdev: Annotated[
+        bool,
+        typer.Option(
+            "--evdev",
+            help="Read INPUT block state from real evdev devices "
+            "(DEVICE/CODE pins of each INPUT block).",
+        ),
+    ] = False,
+    uinput: Annotated[
+        bool,
+        typer.Option(
+            "--uinput",
+            help="Write OUTPUT blocks to real uinput virtual devices "
+            "(DEVICE/CODE pins of each OUTPUT block).",
+        ),
+    ] = False,
 ) -> None:
     """Headless run: load the project, execute it through the scan engine,
-    print resulting output pin values, and exit."""
+    print resulting output pin values, and exit.
+
+    With --evdev/--uinput the engine is wired to real evdev/uinput devices;
+    without them the run is purely combinational (inputs keep defaults,
+    outputs are discarded), which is safe to run on any box.
+    """
     try:
         project = load_project(path)
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"error: {path}: {exc}", err=True)
         raise typer.Exit(1) from None
+    read_inputs: EvdevInputProvider | None = EvdevInputProvider() if evdev else None
+    write_outputs: UinputOutputProvider | None = UinputOutputProvider() if uinput else None
     try:
-        results = run_project(project, cycles=cycles)
+        results = run_project(
+            project,
+            cycles=cycles,
+            read_inputs=read_inputs,
+            write_outputs=write_outputs,
+        )
     except ProjectRunError as exc:
         typer.echo(f"error: {exc.message}", err=True)
         raise typer.Exit(1) from None
+    finally:
+        for provider in (read_inputs, write_outputs):
+            if provider is not None:
+                with contextlib.suppress(Exception):
+                    provider.close()
     typer.echo(
         f"project {project.name!r}: {len(project.blocks)} blocks, "
         f"{len(project.wires)} wires — ran {cycles} cycle(s)"
