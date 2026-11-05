@@ -29,7 +29,8 @@
 ## M4 — Integration & polish
 - [x] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput
 - [x] T17: README: install, GUI usage, block reference with wiring examples, troubleshooting, dev section
-- [ ] T18: Packaging: pipx-installable from GitHub release tags; system-setup.sh idempotent
+- [x] T18: Packaging: pipx-installable from GitHub release tags; system-setup.sh idempotent
+- [ ] Create GitHub release for tag v0.1.1 (needs `gh auth login`, then `gh release create v0.1.1`)
 
 ## Post-v1 (optional)
 - [ ] Ladder-logic view alternative to FBD
