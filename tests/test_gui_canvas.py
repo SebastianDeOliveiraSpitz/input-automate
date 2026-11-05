@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPointF, QSettings, Qt
-from PySide6.QtGui import QDrag, QDropEvent, QKeyEvent, QMouseEvent
+from PySide6.QtGui import QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QFileDialog
 
 from input_automation.engine.block import Block
@@ -207,6 +207,79 @@ class TestBlockCanvas:
         assert any(block_id.startswith("OR") for block_id in ids)
         graph = canvas.to_graph()
         assert graph.has_block(ids[0])
+
+    def test_drop_from_palette_reaches_canvas_via_viewport(self, qtbot) -> None:
+        """Regression: QGraphicsView delivers drop events to its viewport,
+        not the view itself, so the viewport must forward them to
+        BlockCanvas.dropEvent (the 'drag-and-drop does nothing' bug)."""
+        palette = BlockPalette()
+        matches = palette.findItems("OR", Qt.MatchFlag.MatchExactly)
+        assert matches
+        palette.setCurrentItem(matches[0])
+        canvas = BlockCanvas()
+        canvas.set_palette(palette)
+        qtbot.addWidget(palette)
+        qtbot.addWidget(canvas)
+
+        mime = QMimeData()
+        mime.setData(BLOCK_MIME, QByteArray(b"OR"))
+        mime.setText("OR")
+        event = QDropEvent(
+            QPointF(110, 120),
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QEvent.Type.Drop,
+        )
+        canvas.viewport().dropEvent(event)
+        assert event.isAccepted()
+        ids = canvas.block_ids()
+        assert any(block_id.startswith("OR") for block_id in ids)
+        graph = canvas.to_graph()
+        assert graph.has_block(ids[0])
+
+    def test_viewport_accepts_block_drag(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        mime = QMimeData()
+        mime.setData(BLOCK_MIME, QByteArray(b"AND"))
+        enter = QDragEnterEvent(
+            QPointF(110, 120),
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        canvas.viewport().dragEnterEvent(enter)
+        assert enter.isAccepted()
+        move = QDragMoveEvent(
+            QPointF(110, 120),
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QEvent.Type.DragMove,
+        )
+        canvas.viewport().dragMoveEvent(move)
+        assert move.isAccepted()
+
+    def test_viewport_ignores_non_block_mime(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        mime = QMimeData()
+        mime.setText("plain text")
+        event = QDropEvent(
+            QPointF(110, 120),
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QEvent.Type.Drop,
+        )
+        canvas.viewport().dropEvent(event)
+        # a non-block mime must not add anything to the canvas
+        assert canvas.block_ids() == []
 
 
 class TestRewire:

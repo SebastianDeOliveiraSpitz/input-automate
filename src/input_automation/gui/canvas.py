@@ -33,7 +33,16 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QFont,
+    QPainter,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -405,6 +414,7 @@ class BlockCanvas(QGraphicsView):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setViewport(_CanvasViewport(self))
         self._scene = QGraphicsScene(self)
         self._scene.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
         self.setScene(self._scene)
@@ -647,6 +657,12 @@ class BlockCanvas(QGraphicsView):
         else:
             super().dragEnterEvent(event)
 
+    def dragMoveEvent(self, event: Any) -> None:
+        if event.mimeData().hasFormat(BLOCK_MIME):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
     def dropEvent(self, event: Any) -> None:
         mime = event.mimeData()
         if mime.hasFormat(BLOCK_MIME):
@@ -836,6 +852,31 @@ class BlockCanvas(QGraphicsView):
             x += 220
         for wire in graph.wires():
             self.add_wire(wire.src_block, wire.src_pin, wire.dst_block, wire.dst_pin)
+
+
+class _CanvasViewport(QWidget):
+    """Viewport that forwards drag-and-drop events to the canvas.
+
+    A :class:`QGraphicsView` routes drag and drop events to its viewport
+    (the widget under the cursor), not to the view itself. ``BlockCanvas``
+    reimplements ``dragEnterEvent``/``dragMoveEvent``/``dropEvent``, so the
+    viewport forwards them here; otherwise palette drops never reach the
+    canvas.
+    """
+
+    def __init__(self, canvas: BlockCanvas) -> None:
+        super().__init__(canvas)
+        self._canvas = canvas
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self._canvas.dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        self._canvas.dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self._canvas.dropEvent(event)
 
 
 class BlockPalette(QListWidget):
