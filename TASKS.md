@@ -20,7 +20,7 @@
 - [x] T10: Mock IO providers for headless testing (no real devices needed)
 
 ## M3 — GUI canvas (SPS editor)
-- [ ] T11: PySide6 `QGraphicsView` 2D canvas; block palette (draggable function blocks)
+- [x] T11: PySide6 `QGraphicsView` 2D canvas; block palette (draggable function blocks)
 - [ ] T12: Drag blocks onto canvas, position freely; block properties panel (edit parameters)
 - [ ] T13: Draw connections between output pins and input pins; visual wires; delete/rewire
 - [ ] T14: Run/stop toggle; live pin-value monitoring on the canvas (show true/false or numbers on pins)
