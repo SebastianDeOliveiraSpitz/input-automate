@@ -41,6 +41,8 @@ cd input-automate
 sudo ./install/system-setup.sh   # build deps, capture runtime deps, uinput udev rule, 'input' group
 # log out and back in so the group change applies
 pipx install --system-site-packages git+https://github.com/SebastianDeOliveiraSpitz/input-automate@main
+# pin to a tagged release instead:
+# pipx install --system-site-packages git+https://github.com/SebastianDeOliveiraSpitz/input-automate@v0.1.0
 ```
 
 `--system-site-packages` is required for the Wayland screen-capture backends:
