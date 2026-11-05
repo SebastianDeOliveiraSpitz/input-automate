@@ -26,6 +26,14 @@
 - [x] T14: Run/stop toggle; live pin-value monitoring on the canvas (show true/false or numbers on pins)
 - [x] T15: Save/open project files from the GUI; recent projects
 
+## M5 — Legacy cleanup (remove redundant old code)
+- [ ] C1: Remove legacy tile editor GUI (gui/tile_editor.py, gui/editor.py, gui/region_picker.py) — replaced by gui/canvas.py
+- [ ] C2: Remove legacy macro system (macros/ directory) — replaced by engine/ + project/
+- [ ] C3: Remove legacy daemon (daemon.py) — replaced by engine/scan.py
+- [ ] C4: Remove legacy capture/devices/output/triggers/vision modules — replaced by io/ + engine/
+- [ ] C5: Remove legacy CLI macro/device/capture/record commands — replaced by cli project commands
+- [ ] C6: Remove legacy tests for removed modules — keep tests/ for new code only
+
 ## M4 — Integration & polish
 - [x] T16: End-to-end: GUI-built project → headless engine runs it with real evdev/uinput; SPS canvas wired as default `gui()` entry point
 - [x] T17: README: install, GUI usage, block reference with wiring examples, troubleshooting, dev section
