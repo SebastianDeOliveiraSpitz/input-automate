@@ -241,6 +241,13 @@ class WireItem(QGraphicsLineItem):
         width = 2.6 if selected else 1.6
         self.setPen(QPen(color, width))
 
+    def itemChange(
+        self, change: QGraphicsItem.GraphicsItemChange, value: Any
+    ) -> Any:
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            self._refresh_pen()
+        return super().itemChange(change, value)
+
 
 class BlockCanvas(QGraphicsView):
     """The editing canvas: movable blocks, click-to-wire pins, drag-in from the palette."""
@@ -261,6 +268,7 @@ class BlockCanvas(QGraphicsView):
         self._items: dict[str, BlockItem] = {}
         self._wires: dict[tuple[str, str, str, str], WireItem] = {}
         self._wiring: tuple[str, str] | None = None
+        self._rewire: WireItem | None = None
         self._rubber: QGraphicsLineItem | None = None
         self._auto_pos = QPointF(40, 40)
         self._scene.selectionChanged.connect(self._on_selection_changed)
@@ -398,6 +406,56 @@ class BlockCanvas(QGraphicsView):
             self._scene.removeItem(wire)
             self.graphChanged.emit()
 
+    def _cancel_rewire(self) -> None:
+        self._rewire = None
+
+    def _attach_rewire(self, hit: tuple[str, str, PinDirection]) -> None:
+        """Reattach the rewire-pending wire to the clicked port.
+
+        An output click re-sources the wire; an input click re-targets it.
+        Conflicts (same block, duplicate wire, type mismatch) are refused.
+        """
+        block_id, pin_name, direction = hit
+        wire = self._rewire
+        self._cancel_rewire()
+        if wire is None or wire.scene() is None:
+            return
+        if direction is PinDirection.OUTPUT:
+            if block_id == wire.src_block:
+                return
+            self._rewire_endpoint(wire, src_block=block_id, src_pin=pin_name)
+        elif direction is PinDirection.INPUT:
+            if block_id == wire.dst_block:
+                return
+            self._rewire_endpoint(wire, dst_block=block_id, dst_pin=pin_name)
+
+    def _rewire_endpoint(
+        self,
+        wire: WireItem,
+        src_block: str | None = None,
+        src_pin: str | None = None,
+        dst_block: str | None = None,
+        dst_pin: str | None = None,
+    ) -> None:
+        """Move one endpoint of ``wire``; restore the old wire on conflict."""
+        old_key = (wire.src_block, wire.src_pin, wire.dst_block, wire.dst_pin)
+        new_key = (
+            src_block if src_block is not None else wire.src_block,
+            src_pin if src_pin is not None else wire.src_pin,
+            dst_block if dst_block is not None else wire.dst_block,
+            dst_pin if dst_pin is not None else wire.dst_pin,
+        )
+        if new_key == old_key:
+            return
+        self._remove_wire(old_key)
+        try:
+            new_wire = self.add_wire(*new_key)
+        except WireGraphError:
+            # duplicate or type mismatch: put the original wire back
+            self.add_wire(*old_key)
+        else:
+            new_wire.setSelected(True)
+
     def has_wire(self, src_block: str, src_pin: str, dst_block: str, dst_pin: str) -> bool:
         return (src_block, src_pin, dst_block, dst_pin) in self._wires
 
@@ -453,24 +511,44 @@ class BlockCanvas(QGraphicsView):
             super().dropEvent(event)
 
     def mousePressEvent(self, event: Any) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            hits = self.ports_at(self.mapToScene(event.pos()))
-            if hits:
-                block_id, pin_name, direction = hits[0]
-                if direction is PinDirection.OUTPUT:
-                    if self._wiring == (block_id, pin_name):
-                        self._cancel_wiring()
-                    else:
-                        self._start_wiring(block_id, pin_name)
-                    return
-                if direction is PinDirection.INPUT and self._wiring is not None:
-                    src_block, src_pin = self._wiring
-                    if src_block != block_id:
-                        with contextlib.suppress(WireGraphError):
-                            # duplicate or type mismatch: silently refuse
-                            self.add_wire(src_block, src_pin, block_id, pin_name)
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        scene_pos = self.mapToScene(event.pos())
+        hits = self.ports_at(scene_pos)
+        if self._rewire is not None and hits:
+            # A wire awaits reattachment: an output port re-sources it, an
+            # input port re-targets it; conflicts are silently refused.
+            self._attach_rewire(hits[0])
+            return
+        self._cancel_rewire()
+        wire_items = [
+            item
+            for item in self._scene.items(scene_pos)
+            if isinstance(item, WireItem)
+        ]
+        if wire_items:
+            self._cancel_wiring()
+            wire = wire_items[0]
+            wire.setSelected(True)
+            self._rewire = wire
+            return
+        if hits:
+            block_id, pin_name, direction = hits[0]
+            if direction is PinDirection.OUTPUT:
+                if self._wiring == (block_id, pin_name):
                     self._cancel_wiring()
-                    return
+                else:
+                    self._start_wiring(block_id, pin_name)
+                return
+            if direction is PinDirection.INPUT and self._wiring is not None:
+                src_block, src_pin = self._wiring
+                if src_block != block_id:
+                    with contextlib.suppress(WireGraphError):
+                        # duplicate or type mismatch: silently refuse
+                        self.add_wire(src_block, src_pin, block_id, pin_name)
+                self._cancel_wiring()
+                return
             self._cancel_wiring()
         super().mousePressEvent(event)
 
@@ -503,6 +581,7 @@ class BlockCanvas(QGraphicsView):
             return
         if event.key() == Qt.Key.Key_Escape:
             self._cancel_wiring()
+            self._cancel_rewire()
             return
         super().keyPressEvent(event)
 
