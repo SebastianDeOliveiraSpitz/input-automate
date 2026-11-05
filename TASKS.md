@@ -24,7 +24,7 @@ New work goes in GitHub issues with `type:*`, `priority:*`, and `status:*` label
 - [x] T18: Packaging
 
 ## M5 — Legacy cleanup (pending, convert to issues)
-- [ ] C1: Remove legacy tile editor GUI
+- [x] C1: Remove legacy tile editor GUI
 - [ ] C2: Remove legacy macro system
 - [ ] C3: Remove legacy daemon
 - [ ] C4: Remove legacy capture/devices/output/triggers/vision modules
