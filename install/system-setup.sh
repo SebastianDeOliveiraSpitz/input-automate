@@ -41,14 +41,34 @@ dnf install -y "${DEPS[@]}"
 
 # 0b. runtime deps for Wayland screen capture (mutter/portal backends):
 #     PyGObject (gi) must come from the system, GStreamer needs the
-#     pipewire element for pipewiresrc. Requires the pipx venv to be
+#     pipewiresrc element for pipewiresrc. Requires the pipx venv to be
 #     created with --system-site-packages (see README).
-CAPTURE_DEPS=(python3-gobject gstreamer1-plugin-pipewire)
-if rpm -q python3-gobject >/dev/null 2>&1 && rpm -q gstreamer1-plugin-pipewire >/dev/null 2>&1; then
-  echo "capture runtime deps already present"
+#     The GStreamer/PipeWire package name differs per distro:
+#     pipewire-gstreamer on RHEL, gstreamer1-plugin-pipewire on older Fedora.
+CAPTURE_DEPS=(python3-gobject)
+if rpm -q python3-gobject >/dev/null 2>&1; then
+  echo "python3-gobject already present"
 else
+  echo "queueing python3-gobject"
+fi
+PIPEWIRE_GST=""
+if rpm -q pipewire-gstreamer >/dev/null 2>&1; then
+  echo "pipewire-gstreamer already present"
+elif dnf -q list pipewire-gstreamer >/dev/null 2>&1; then
+  PIPEWIRE_GST=pipewire-gstreamer
+elif dnf -q list gstreamer1-plugin-pipewire >/dev/null 2>&1; then
+  PIPEWIRE_GST=gstreamer1-plugin-pipewire
+else
+  echo "warning: no pipewire GStreamer package in dnf repos — mutter/portal capture falls back to the mock backend"
+fi
+if [[ -n "${PIPEWIRE_GST}" ]]; then
+  CAPTURE_DEPS+=("${PIPEWIRE_GST}")
+fi
+if [[ ${#CAPTURE_DEPS[@]} -gt 0 ]]; then
   echo "installing capture runtime deps: ${CAPTURE_DEPS[*]}"
   dnf install -y "${CAPTURE_DEPS[@]}"
+else
+  echo "capture runtime deps already present"
 fi
 
 # 1. uinput module at boot
@@ -80,7 +100,7 @@ DESKTOP_SRC="${SCRIPT_DIR}/input-automation.desktop"
 APPS_DIR="$(getent passwd "${TARGET_USER}" | cut -d: -f6)/.local/share/applications"
 if [[ -f "${DESKTOP_SRC}" ]]; then
   mkdir -p "${APPS_DIR}"
-  if ! cmp -qs "${DESKTOP_SRC}" "${APPS_DIR}/input-automation.desktop"; then
+  if ! diff -q "${DESKTOP_SRC}" "${APPS_DIR}/input-automation.desktop" >/dev/null; then
     install -m 0644 "${DESKTOP_SRC}" "${APPS_DIR}/input-automation.desktop"
     echo "installed ${APPS_DIR}/input-automation.desktop"
   fi
@@ -91,7 +111,7 @@ UNIT_SRC="${SCRIPT_DIR}/input-automation-daemon.service"
 SYSTEMD_DIR="$(getent passwd "${TARGET_USER}" | cut -d: -f6)/.config/systemd/user"
 if [[ -f "${UNIT_SRC}" ]]; then
   mkdir -p "${SYSTEMD_DIR}"
-  if ! cmp -qs "${UNIT_SRC}" "${SYSTEMD_DIR}/input-automation-daemon.service"; then
+  if ! diff -q "${UNIT_SRC}" "${SYSTEMD_DIR}/input-automation-daemon.service" >/dev/null; then
     install -m 0644 "${UNIT_SRC}" "${SYSTEMD_DIR}/input-automation-daemon.service"
     systemctl --user daemon-reload 2>/dev/null || true
     echo "installed ${SYSTEMD_DIR}/input-automation-daemon.service"
