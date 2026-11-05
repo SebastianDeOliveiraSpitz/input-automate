@@ -14,7 +14,7 @@
 - [x] T6: Project load/save round-trip via YAML; headless `run` executes a project file and exits
 
 ## M2 — IO layer
-- [ ] T7: evdev input block: read device key/button/axis state into a pin
+- [x] T7: evdev input block: read device key/button/axis state into a pin
 - [ ] T8: uinput output block: write pin state to virtual keyboard/mouse output
 - [ ] T9: Screen capture block: PipeWire portal frame → OpenCV region measurement (color/threshold) → pin
 - [ ] T10: Mock IO providers for headless testing (no real devices needed)
