@@ -12,11 +12,17 @@ from input_automation.engine.block import Block
 from input_automation.engine.registry import default_registry
 from input_automation.engine.wires import (
     DuplicateWireError,
+    UnknownPinError,
     WireCycleError,
     WireGraph,
     WireTypeError,
 )
-from input_automation.gui.canvas import BLOCK_MIME, BlockCanvas, BlockPalette
+from input_automation.gui.canvas import (
+    BLOCK_MIME,
+    BlockCanvas,
+    BlockPalette,
+    PropertiesPanel,
+)
 from input_automation.project.pins import PinDirection
 
 
@@ -197,3 +203,110 @@ class TestBlockCanvas:
         assert any(block_id.startswith("OR") for block_id in ids)
         graph = canvas.to_graph()
         assert graph.has_block(ids[0])
+
+
+class TestBlockParameters:
+    def test_add_block_stores_parameters(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        item = canvas.add_block("TON", "t", parameters={"PT": 2.5, "DT": 0.1})
+        assert item.parameters == {"PT": 2.5, "DT": 0.1}
+
+    def test_to_graph_applies_parameters(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("TON", "t", parameters={"PT": 2.5})
+        graph = canvas.to_graph()
+        assert graph.block("t").input("PT").value == 2.5
+        # defaults still apply for parameters left unset
+        assert graph.block("t").input("DT").value == 0.0
+
+    def test_to_graph_unknown_parameter_raises(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a", parameters={"NOPE": 1})
+        with pytest.raises(UnknownPinError):
+            canvas.to_graph()
+
+    def test_to_graph_wrong_type_parameter_raises(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("TON", "t", parameters={"PT": "not-a-float"})
+        with pytest.raises(WireTypeError):
+            canvas.to_graph()
+
+    def test_from_graph_round_trips_parameters(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("TON", "t", parameters={"PT": 2.5, "DT": 0.1})
+        graph = canvas.to_graph()
+        graph.block("t").input("PT").set(9.0)
+
+        other = BlockCanvas()
+        qtbot.addWidget(other)
+        other.from_graph(graph)
+
+        item = other.block_item("t")
+        assert item.parameters == {"PT": 9.0, "DT": 0.1}
+        back = other.to_graph()
+        assert back.block("t").input("PT").value == 9.0
+
+
+class TestPropertiesPanel:
+    def test_no_block_selected(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        panel.set_block(None)
+        assert panel._editors == {}
+
+    def test_shows_only_defaulted_inputs(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+
+        ton = canvas.add_block("TON", "t")
+        panel.set_block(ton)
+        # TON inputs: IN (no default), PT (default 1.0), DT (default 0.0)
+        assert set(panel._editors) == {"PT", "DT"}
+        assert panel._editors["PT"][0].value() == 1.0
+        assert panel._editors["DT"][0].value() == 0.0
+
+        and_block = canvas.add_block("AND", "a")
+        panel.set_block(and_block)
+        # AND has no defaulted inputs -> no editors
+        assert panel._editors == {}
+
+    def test_editing_updates_block_parameters(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+
+        item = canvas.add_block("TON", "t", parameters={"PT": 1.0})
+        panel.set_block(item)
+
+        with qtbot.waitSignal(panel.parametersChanged):
+            panel._editors["PT"][0].setValue(5.5)
+
+        assert item.parameters == {"PT": 5.5}
+
+    def test_panel_follows_canvas_selection(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        canvas.selectionChanged.connect(
+            lambda: panel.set_block(canvas.selected_block())
+        )
+
+        canvas.add_block("TON", "t")
+        canvas.add_block("AND", "a")
+        canvas.block_item("t").setSelected(True)
+        # setSelected() does not emit scene.selectionChanged; drive the panel directly
+        panel.set_block(canvas.selected_block())
+        assert set(panel._editors) == {"PT", "DT"}
+
+        canvas.block_item("t").setSelected(False)
+        panel.set_block(canvas.selected_block())
+        assert panel._editors == {}

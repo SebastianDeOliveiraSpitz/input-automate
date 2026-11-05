@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 from PySide6.QtCore import (
@@ -31,22 +32,29 @@ from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QDockWidget,
+    QDoubleSpinBox,
+    QFormLayout,
     QGraphicsItem,
     QGraphicsLineItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
+    QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QSpinBox,
     QStyle,
     QStyleOptionGraphicsItem,
+    QVBoxLayout,
     QWidget,
 )
 
 from input_automation.engine.block import Block
-from input_automation.engine.pins import Pin
+from input_automation.engine.pins import Pin, PinTypeError
 from input_automation.engine.registry import default_registry
 from input_automation.engine.wires import (
     DuplicateWireError,
@@ -56,13 +64,14 @@ from input_automation.engine.wires import (
     WireGraphError,
     WireTypeError,
 )
-from input_automation.project.pins import PinDirection
+from input_automation.project.pins import PinDirection, PinDType
 
 __all__ = [
     "BlockCanvas",
     "BlockItem",
     "BlockPalette",
     "CanvasWindow",
+    "PropertiesPanel",
     "WireItem",
     "run",
 ]
@@ -85,12 +94,14 @@ class BlockItem(QGraphicsRectItem):
         type_name: str,
         input_pins: tuple[Pin, ...] = (),
         output_pins: tuple[Pin, ...] = (),
+        parameters: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(0, 0, BLOCK_WIDTH, TITLE_HEIGHT)
         self.block_id = block_id
         self.type_name = type_name
         self.input_pins = list(input_pins)
         self.output_pins = list(output_pins)
+        self.parameters: dict[str, Any] = dict(parameters or {})
         self._canvas: BlockCanvas | None = None
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -235,6 +246,7 @@ class BlockCanvas(QGraphicsView):
     """The editing canvas: movable blocks, click-to-wire pins, drag-in from the palette."""
 
     graphChanged = Signal()
+    selectionChanged = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -251,6 +263,7 @@ class BlockCanvas(QGraphicsView):
         self._wiring: tuple[str, str] | None = None
         self._rubber: QGraphicsLineItem | None = None
         self._auto_pos = QPointF(40, 40)
+        self._scene.selectionChanged.connect(self._on_selection_changed)
 
     # -- palette ----------------------------------------------------------
 
@@ -274,13 +287,27 @@ class BlockCanvas(QGraphicsView):
     def has_block(self, block_id: str) -> bool:
         return block_id in self._items
 
+    def selected_block(self) -> BlockItem | None:
+        """Return the single selected block, or ``None`` if none/multiple are selected."""
+        selected = [it for it in self._scene.selectedItems() if isinstance(it, BlockItem)]
+        return selected[0] if len(selected) == 1 else None
+
+    def _on_selection_changed(self) -> None:
+        self.selectionChanged.emit()
+
     def add_block(
         self,
         type_name: str,
         block_id: str | None = None,
         pos: QPointF | None = None,
+        parameters: dict[str, Any] | None = None,
     ) -> BlockItem:
-        """Create a block item of registered ``type_name`` (unique id if omitted)."""
+        """Create a block item of registered ``type_name`` (unique id if omitted).
+
+        ``parameters`` are editable parameter values (e.g. a TON block's ``PT``)
+        that are applied to the block's input pins when the canvas is exported
+        to an engine :class:`~input_automation.engine.wires.WireGraph`.
+        """
         if block_id is None:
             n = 1
             while f"{type_name}{n}" in self._items:
@@ -294,6 +321,7 @@ class BlockCanvas(QGraphicsView):
             type_name,
             tuple(block.inputs.values()),
             tuple(block.outputs.values()),
+            parameters=parameters,
         )
         item._canvas = self
         if pos is None:
@@ -505,10 +533,27 @@ class BlockCanvas(QGraphicsView):
     # -- engine round trip ------------------------------------------------
 
     def to_graph(self) -> WireGraph:
-        """Build an engine :class:`WireGraph` from the canvas."""
+        """Build an engine :class:`WireGraph` from the canvas.
+
+        Each block's editable :attr:`BlockItem.parameters` are applied to the
+        engine block's input pins, so a parameter such as a TON block's ``PT``
+        survives the round trip into the headless engine.
+        """
         graph: WireGraph = WireGraph()
         for item in self._items.values():
-            graph.add_block(default_registry.create(item.type_name, item.block_id))
+            block = default_registry.create(item.type_name, item.block_id)
+            for name, value in item.parameters.items():
+                try:
+                    pin = block.input(name)
+                except KeyError:
+                    raise UnknownPinError(
+                        f"block {item.block_id!r}: unknown parameter {name!r}"
+                    ) from None
+                try:
+                    pin.set(value)
+                except PinTypeError as exc:
+                    raise WireTypeError(str(exc)) from None
+            graph.add_block(block)
         for key in self._wires:
             src_block, src_pin, dst_block, dst_pin = key
             graph.connect(src_block, src_pin, dst_block, dst_pin)
@@ -531,7 +576,12 @@ class BlockCanvas(QGraphicsView):
             y = 40
             for block_id in columns[depth_level]:
                 block = graph.block(block_id)
-                self.add_block(block.type_name, block_id, QPointF(x, y))
+                parameters = {
+                    name: pin.value
+                    for name, pin in block.inputs.items()
+                    if pin.value is not None
+                }
+                self.add_block(block.type_name, block_id, QPointF(x, y), parameters)
                 y += 140
             x += 220
         for wire in graph.wires():
@@ -571,8 +621,86 @@ class BlockPalette(QListWidget):
         return item.text() if item is not None else None
 
 
+class PropertiesPanel(QWidget):
+    """Editable parameters for the single block currently selected on the canvas.
+
+    Shows one editor per input pin that carries a default value (e.g. a TON
+    block's ``PT`` or a CTU block's ``PV``). Editing a value updates the
+    selected block item's :attr:`~BlockItem.parameters` and emits
+    :attr:`parametersChanged` so the canvas can be re-validated / re-exported.
+    """
+
+    parametersChanged = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._block: BlockItem | None = None
+        self._editors: dict[str, tuple[QWidget, PinDType]] = {}
+
+        layout = QVBoxLayout(self)
+        self._title = QLabel("No block selected")
+        self._form = QFormLayout()
+        layout.addWidget(self._title)
+        layout.addLayout(self._form)
+        layout.addStretch(1)
+
+    def set_block(self, block: BlockItem | None) -> None:
+        self._block = block
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        while self._form.count():
+            self._form.removeRow(0)
+        self._editors.clear()
+
+        if self._block is None:
+            self._title.setText("No block selected")
+            return
+
+        self._title.setText(f"{self._block.type_name}  ·  {self._block.block_id}")
+        template = default_registry.create(self._block.type_name, self._block.block_id)
+        parameters = dict(self._block.parameters)
+
+        for name, pin in template.inputs.items():
+            if pin.value is None:  # no default -> not a configurable parameter
+                continue
+            editor = self._editor(name, pin.dtype, parameters.get(name, pin.value))
+            self._form.addRow(QLabel(name), editor)
+            self._editors[name] = (editor, pin.dtype)
+
+    def _editor(
+        self, name: str, dtype: PinDType, value: bool | int | float | str | None
+    ) -> QWidget:
+        if dtype is PinDType.BOOL:
+            checkbox = QCheckBox()
+            checkbox.setChecked(bool(value))
+            checkbox.toggled.connect(partial(self._set_value, name))
+            return checkbox
+        if dtype is PinDType.INT:
+            spinbox = QSpinBox()
+            spinbox.setRange(-2_147_483_648, 2_147_483_647)
+            spinbox.setValue(int(value if isinstance(value, int) else 0))
+            spinbox.valueChanged.connect(partial(self._set_value, name))
+            return spinbox
+        if dtype is PinDType.FLOAT:
+            float_spin = QDoubleSpinBox()
+            float_spin.setRange(-1e9, 1e9)
+            float_spin.setValue(float(value if isinstance(value, (int, float)) else 0.0))
+            float_spin.valueChanged.connect(partial(self._set_value, name))
+            return float_spin
+        line_edit = QLineEdit(str(value if value is not None else ""))
+        line_edit.textChanged.connect(partial(self._set_value, name))
+        return line_edit
+
+    def _set_value(self, name: str, value: bool | int | float | str) -> None:
+        if self._block is None:
+            return
+        self._block.parameters[name] = value
+        self.parametersChanged.emit()
+
+
 class CanvasWindow(QMainWindow):
-    """Top-level window: palette dock + canvas + validate action (T11 demo)."""
+    """Top-level window: palette dock + canvas + validate action (T11/T12 demo)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -585,6 +713,15 @@ class CanvasWindow(QMainWindow):
         dock = QDockWidget("Palette", self)
         dock.setWidget(palette)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
+        self._properties = PropertiesPanel()
+        self._canvas.selectionChanged.connect(
+            lambda: self._properties.set_block(self._canvas.selected_block())
+        )
+        self._properties.parametersChanged.connect(self._canvas.graphChanged)
+        props_dock = QDockWidget("Properties", self)
+        props_dock.setWidget(self._properties)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, props_dock)
 
         bar = self.addToolBar("canvas")
         new_act = QAction("New", self)
