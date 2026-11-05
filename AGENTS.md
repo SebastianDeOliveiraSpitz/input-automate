@@ -53,12 +53,22 @@ keyboard/mouse) plus internal signals.
 - Use KISS and DRY.
 - Commit and push small changes frequently.
 - Verify before every commit: `ruff check .`, `mypy` (configured targets), `pytest`.
-- Work one TASKS.md task at a time, in listed order; remove its line when done.
+- Work one GitHub issue at a time; issues are the single source of truth (SSOT).
 - Logic engine must be headless-testable: no PySide6/Qt imports in engine code,
   mock IO providers for tests.
 - Never log raw input device data or keystroke contents; macro/event data may be
   logged in sanitized form only.
 - Do not edit `AGENTS.md` (project constitution — read-only).
-- `TASKS.md` is the living task list maintained by the dev agent: mark tasks
-  done (`- [ ]` → `- [x]`), add new ones, remove obsolete ones each tick.
+- `TASKS.md` is an archived backlog reference. GitHub issues are the SSOT;
+  maintain issue labels (`status:*`, `type:*`, `priority:*`) instead of TASKS.md checkboxes.
 - No ansible playbooks (that is Basti's separate repo).
+
+## Issue-driven workflow
+
+1. Human creates a GitHub issue with `type:*` and `priority:*` labels.
+2. Agent picks `status:ready` issues (or triages untriaged ones), implements,
+   commits + pushes to `main`, comments on the issue, sets `status:review`
+   or `status:done`.
+3. If the agent needs clarification, it comments on the issue and sets
+   `status:needs-info`. The human replies on the same issue thread.
+4. Bugs or follow-ups go in the **same issue** — do not create duplicate issues.
