@@ -1267,3 +1267,28 @@ class TestInputConfig:
         assert panel._editors["CODE"][0].text() == "KEY_A"
         assert panel._record_status.text() == "recorded KEY_A"
         assert panel._record_button is not None and panel._record_button.isEnabled()
+
+    def test_recorded_after_rebuild_does_not_crash(self, qtbot, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        # Regression test for issue #9 follow-up bug: the recorder outlives the
+        # record row. Selecting another block (or none) while a recorded signal
+        # is pending must not invoke the deleted QPushButton/QLabel.
+        panel = self._panel(qtbot, monkeypatch)
+        button = panel._record_button
+        assert button is not None
+
+        panel.set_block(None)
+        assert panel._record_button is None
+        assert panel._record_slot is None and panel._fail_slot is None
+
+        # Emitting on the (now disconnected) recorder must not raise.
+        panel._recorder.recorded.emit("KEY_A")
+        panel._recorder.failed.emit("something broke")
+
+        # Re-selecting the INPUT block rebuilds a working record row.
+        canvas = BlockCanvas()
+        canvas.add_block("INPUT", "i1")
+        panel.set_block(canvas.block_item("i1"))
+        assert panel._record_button is not None
+        assert panel._record_status is not None
+        panel._recorder.recorded.emit("KEY_B")
+        assert panel._record_status.text() == "recorded KEY_B"

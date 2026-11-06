@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 from itertools import chain
 from pathlib import Path
@@ -983,6 +983,8 @@ class PropertiesPanel(QWidget):
         self._record_button: QPushButton | None = None
         self._record_status: QLabel | None = None
         self._recorder = InputRecorder(parent=self)
+        self._record_slot: Callable[[str], None] | None = None
+        self._fail_slot: Callable[[str], None] | None = None
 
         layout = QVBoxLayout(self)
         self._title = QLabel("No block selected")
@@ -993,8 +995,27 @@ class PropertiesPanel(QWidget):
 
     def set_block(self, block: BlockItem | None) -> None:
         self._recorder.stop()
+        self._disconnect_recorder()
         self._block = block
         self._rebuild()
+
+    def _disconnect_recorder(self) -> None:
+        """Disconnect recording slots so callbacks never touch deleted widgets.
+
+        The recorder outlives a single properties-panel build (it is parented
+        to the panel, not to the record row). Without this, a ``recorded`` /
+        ``failed`` signal delivered after ``_rebuild()`` removes the record row
+        invokes closures holding already-deleted ``QPushButton``/``QLabel``
+        objects, raising ``RuntimeError: ... already deleted``.
+        """
+        if self._record_slot is not None:
+            with contextlib.suppress(TypeError):  # not currently connected
+                self._recorder.recorded.disconnect(self._record_slot)
+            self._record_slot = None
+        if self._fail_slot is not None:
+            with contextlib.suppress(TypeError):  # not currently connected
+                self._recorder.failed.disconnect(self._fail_slot)
+            self._fail_slot = None
 
     def _rebuild(self) -> None:
         while self._form.count():
@@ -1003,12 +1024,21 @@ class PropertiesPanel(QWidget):
 
         if self._block is None:
             self._title.setText("No block selected")
+            self._record_button = None
+            self._record_status = None
+            self._device_combo = None
             return
 
         self._title.setText(f"{self._block.type_name}  ·  {self._block.block_id}")
         template = default_registry.create(self._block.type_name, self._block.block_id)
         parameters = dict(self._block.parameters)
         is_input = self._block.type_name == "INPUT"
+        if not is_input:
+            # Only INPUT blocks expose device selection / recording; drop any
+            # stale references from a previously shown INPUT block.
+            self._record_button = None
+            self._record_status = None
+            self._device_combo = None
 
         for name, pin in template.inputs.items():
             if pin.value is None:  # no default -> not a configurable parameter
@@ -1105,6 +1135,13 @@ class PropertiesPanel(QWidget):
             status.setText("recording… press a key or button on the device")
 
         def on_recorded(code_name: str) -> None:
+            # The recorder outlives the record row: a queued ``recorded``
+            # signal may arrive after _rebuild() deleted these widgets. Ignore
+            # events from any build other than the current one (`is` on a
+            # deleted PySide wrapper compares Python identity only, so it is
+            # safe even once the C++ object is gone).
+            if self._record_button is not button:
+                return
             button.setEnabled(True)
             status.setText(f"recorded {code_name}")
             editor = self._editors.get("CODE")
@@ -1114,10 +1151,14 @@ class PropertiesPanel(QWidget):
                     edit_widget.setText(code_name)
 
         def on_failed(message: str) -> None:
+            if self._record_button is not button:
+                return
             button.setEnabled(True)
             status.setText(f"record failed: {message}")
 
         button.clicked.connect(start_recording)
+        self._record_slot = on_recorded
+        self._fail_slot = on_failed
         self._recorder.recorded.connect(on_recorded)
         self._recorder.failed.connect(on_failed)
 
