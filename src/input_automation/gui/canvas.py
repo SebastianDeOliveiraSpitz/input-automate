@@ -129,6 +129,11 @@ PIN_ROW = 22
 PORT = 10
 PAD = 6
 
+# Suggested virtual uinput device names for OUTPUT blocks. Virtual output
+# devices are created lazily by name (there is nothing to discover under
+# /dev/input), so the config panel offers these presets plus free text.
+OUTPUT_DEVICE_PRESETS = ("virtual-keyboard", "virtual-mouse")
+
 
 def _format_pin_value(value: bool | int | float | str | None) -> str:
     """Render a pin's current value for live monitoring (``None`` -> empty)."""
@@ -1033,9 +1038,11 @@ class PropertiesPanel(QWidget):
         template = default_registry.create(self._block.type_name, self._block.block_id)
         parameters = dict(self._block.parameters)
         is_input = self._block.type_name == "INPUT"
-        if not is_input:
-            # Only INPUT blocks expose device selection / recording; drop any
-            # stale references from a previously shown INPUT block.
+        is_output = self._block.type_name == "OUTPUT"
+        is_configurable = is_input or is_output
+        if not is_configurable:
+            # Only INPUT/OUTPUT blocks expose device selection / recording;
+            # drop any stale references from a previously shown block.
             self._record_button = None
             self._record_status = None
             self._device_combo = None
@@ -1043,15 +1050,15 @@ class PropertiesPanel(QWidget):
         for name, pin in template.inputs.items():
             if pin.value is None:  # no default -> not a configurable parameter
                 continue
-            if is_input and name == "DEVICE":
+            if is_configurable and name == "DEVICE":
                 continue  # replaced by the device picker row below
             editor = self._editor(name, pin.dtype, parameters.get(name, pin.value))
-            if is_input and name == "CODE" and isinstance(editor, QLineEdit):
+            if is_configurable and name == "CODE" and isinstance(editor, QLineEdit):
                 self._attach_code_completer(editor)
             self._form.addRow(QLabel(name), editor)
             self._editors[name] = (editor, pin.dtype)
-        if is_input:
-            self._build_device_row(parameters)
+        if is_configurable:
+            self._build_device_row(parameters, is_output=is_output)
             self._build_record_row()
 
     @staticmethod
@@ -1062,11 +1069,16 @@ class PropertiesPanel(QWidget):
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         editor.setCompleter(completer)
 
-    def _build_device_row(self, parameters: dict[str, Any]) -> None:
+    def _build_device_row(self, parameters: dict[str, Any], *, is_output: bool = False) -> None:
         assert self._block is not None
         combo = QComboBox()
         combo.setEditable(True)
-        self._populate_devices(combo)
+        if is_output:
+            self._populate_output_devices(combo)
+            refresh_tooltip = "Virtual output devices are created by name; nothing to rescan"
+        else:
+            self._populate_devices(combo)
+            refresh_tooltip = "Re-scan /dev/input for available devices"
 
         def device_changed(index: int) -> None:
             block = self._block
@@ -1093,9 +1105,15 @@ class PropertiesPanel(QWidget):
         elif current:
             combo.setEditText(current)
 
+        def refresh_devices() -> None:
+            if is_output:
+                self._populate_output_devices(combo)
+            else:
+                self._populate_devices(combo)
+
         refresh = QPushButton("Refresh")
-        refresh.setToolTip("Re-scan /dev/input for available devices")
-        refresh.clicked.connect(lambda _checked: self._populate_devices(combo))
+        refresh.setToolTip(refresh_tooltip)
+        refresh.clicked.connect(refresh_devices)
 
         row = QWidget()
         layout = QHBoxLayout(row)
@@ -1104,6 +1122,19 @@ class PropertiesPanel(QWidget):
         layout.addWidget(refresh)
         self._device_combo = combo
         self._form.addRow(QLabel("Device"), row)
+
+    def _populate_output_devices(self, combo: QComboBox) -> None:
+        """Fill the output device combo with suggested virtual device names.
+
+        Virtual uinput devices are created lazily by name (there is nothing to
+        discover under /dev/input), so the presets double as the pickable
+        targets and the combo stays editable for a free-form device name.
+        """
+        combo.blockSignals(True)
+        combo.clear()
+        for name in OUTPUT_DEVICE_PRESETS:
+            combo.addItem(name, name)
+        combo.blockSignals(False)
 
     def _populate_devices(self, combo: QComboBox) -> None:
         combo.blockSignals(True)

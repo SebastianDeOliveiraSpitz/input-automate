@@ -1292,3 +1292,119 @@ class TestInputConfig:
         assert panel._record_status is not None
         panel._recorder.recorded.emit("KEY_B")
         assert panel._record_status.text() == "recorded KEY_B"
+
+
+class TestOutputConfig:
+    """OUTPUT block configuration: output device picker, code suggestions, recording."""
+
+    def _panel(
+        self,
+        qtbot,
+        monkeypatch,
+        recorder_cls: type[QObject] | None = None,
+    ) -> PropertiesPanel:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("OUTPUT", "o1")
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        panel.set_block(canvas.block_item("o1"))
+        return panel
+
+    def test_output_block_has_device_picker(self, qtbot, monkeypatch) -> None:
+        panel = self._panel(qtbot, monkeypatch)
+        assert panel._device_combo is not None
+        assert panel._device_combo.count() == len(canvas_module.OUTPUT_DEVICE_PRESETS)
+        assert panel.findChildren(QPushButton) != []
+
+    def test_output_device_picker_populated_from_presets(self, qtbot, monkeypatch) -> None:
+        panel = self._panel(qtbot, monkeypatch)
+        texts = [panel._device_combo.itemText(i) for i in range(panel._device_combo.count())]
+        assert "virtual-keyboard" in texts
+        assert "virtual-mouse" in texts
+        assert panel._device_combo.itemData(0) == "virtual-keyboard"
+
+    def test_output_device_selection_stored_in_block_parameters(
+        self, qtbot, monkeypatch
+    ) -> None:
+        panel = self._panel(qtbot, monkeypatch)
+        item = panel._block
+        assert item is not None
+        panel._device_combo.setCurrentIndex(-1)
+        with qtbot.waitSignal(panel.parametersChanged):
+            panel._device_combo.setCurrentIndex(0)
+        assert item.parameters == {"DEVICE": "virtual-keyboard"}
+
+    def test_typed_output_device_name_is_kept(self, qtbot, monkeypatch) -> None:
+        panel = self._panel(qtbot, monkeypatch)
+        item = panel._block
+        assert item is not None
+        panel._device_combo.setEditText("out-kb")
+        panel._device_combo.currentIndexChanged.emit(-1)
+        assert item.parameters == {"DEVICE": "out-kb"}
+
+    def test_output_code_editor_offers_code_name_completer(
+        self, qtbot, monkeypatch
+    ) -> None:
+        panel = self._panel(qtbot, monkeypatch)
+        editor = panel._editors["CODE"][0]
+        completer = editor.completer()
+        assert completer is not None
+        assert "KEY_A" in completer.model().stringList()
+        assert "BTN_LEFT" in completer.model().stringList()
+
+    def test_output_record_button_starts_recorder_for_selected_device(
+        self, qtbot, monkeypatch
+    ) -> None:
+        started: list[object] = []
+
+        class _FakeRecorder(QObject):
+            recorded = Signal(str)
+            failed = Signal(str)
+
+            def __init__(self, parent: QObject | None = None) -> None:
+                super().__init__(parent)
+                self.started_paths: list[str] | None = None
+                self.stopped = False
+
+            def start(self, paths: list[str] | None = None) -> None:
+                started.append(paths)
+                self.started_paths = paths
+
+            def stop(self) -> None:
+                self.stopped = True
+
+        monkeypatch.setattr(canvas_module, "InputRecorder", _FakeRecorder)
+        panel = self._panel(qtbot, monkeypatch)
+        item = panel._block
+        assert item is not None
+        panel._device_combo.setCurrentIndex(-1)
+        with qtbot.waitSignal(panel.parametersChanged):
+            panel._device_combo.setCurrentIndex(0)
+
+        record = next(
+            button
+            for button in panel.findChildren(QPushButton)
+            if button.text() == "Record key/button…"
+        )
+        record.click()
+        recorder = panel._recorder
+        assert isinstance(recorder, _FakeRecorder)
+        assert recorder.started_paths == ["virtual-keyboard"]
+        assert not record.isEnabled()
+        assert panel._record_status.text().startswith("recording")
+
+    def test_output_recorded_code_writes_code_parameter(
+        self, qtbot, monkeypatch
+    ) -> None:
+        panel = self._panel(qtbot, monkeypatch)
+        recorder = panel._recorder
+        assert panel._record_status.text() == ""
+        with qtbot.waitSignal(panel.parametersChanged):
+            recorder.recorded.emit("KEY_A")
+        item = panel._block
+        assert item is not None
+        assert item.parameters["CODE"] == "KEY_A"
+        assert panel._editors["CODE"][0].text() == "KEY_A"
+        assert panel._record_status.text() == "recorded KEY_A"
+        assert panel._record_button is not None and panel._record_button.isEnabled()
