@@ -9,8 +9,9 @@ pure-Python cyclic scan engine executes the graph: read inputs → evaluate bloc
 in dependency order → write outputs, at a fixed cycle time.
 
 Primary target is GNOME on Wayland (Fedora/RHEL); wlroots-based compositors are
-best-effort via fallback backends. The GUI runs on the desktop; the same logic
-engine runs headless (CLI) for testing and unattended operation.
+best-effort via fallback backends. The GUI runs on the desktop and hosts the
+logic engine loop (run/stop toggle on the canvas). The same engine code runs
+headless (CLI) for testing and unattended operation.
 
 Blocks read physical inputs (evdev keys/buttons/axes), screen state (PipeWire
 capture + OpenCV analysis), and produce physical outputs (uinput virtual
@@ -25,7 +26,7 @@ keyboard/mouse) plus internal signals.
    - Project persistence: YAML/JSON (block definitions + wiring)
 2. **IO layer** — evdev input, uinput output, PipeWire portal capture, OpenCV primitives.
    - Blocks declare which IO they need; the engine injects providers.
-3. **GUI** — PySide6 `QGraphicsView` 2D canvas (`CanvasWindow`) is the app's main window, with block palette, drag-drop, connection drawing, properties panel, live pin-value monitoring, run/stop. The legacy tile editor has been removed in M5 cleanup.
+3. **GUI** — PySide6 `QGraphicsView` 2D canvas (`CanvasWindow`) is the app's main window, with block palette, drag-drop, connection drawing, properties panel, live pin-value monitoring, run/stop toggle that starts/stops the embedded scan engine loop. The legacy tile editor has been removed in M5 cleanup.
 
 ## Stack
 
@@ -59,8 +60,7 @@ keyboard/mouse) plus internal signals.
 - Never log raw input device data or keystroke contents; macro/event data may be
   logged in sanitized form only.
 - Do not edit `AGENTS.md` (project constitution — read-only).
-- `TASKS.md` is an archived backlog reference. GitHub issues are the SSOT;
-  maintain issue labels (`status:*`, `type:*`, `priority:*`) instead of TASKS.md checkboxes.
+- `TASKS.md` is an archived backlog reference (all tasks complete). GitHub issues are the SSOT; maintain issue labels (`status:*`, `type:*`, `priority:*`) instead of TASKS.md checkboxes. Do not fall back to TASKS.md tasks — all are done.
 - No ansible playbooks (that is Basti's separate repo).
 
 ## Issue-driven workflow
