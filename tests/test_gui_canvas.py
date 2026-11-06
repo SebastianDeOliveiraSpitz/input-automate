@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPointF, QSettings, Qt
 from PySide6.QtGui import QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog
 
 from input_automation.engine.block import Block
@@ -439,6 +440,118 @@ class TestRewire:
             canvas, canvas.block_item("t").port_scene_pos("IN", PinDirection.INPUT)
         )
         assert canvas.wires() == []
+
+
+class TestWireAttach:
+    def _press(self, canvas: BlockCanvas, scene_pos: QPointF) -> QMouseEvent:
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            scene_pos,
+            scene_pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        canvas.mousePressEvent(event)
+        return event
+
+    def _release(self, canvas: BlockCanvas, scene_pos: QPointF) -> QMouseEvent:
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            scene_pos,
+            scene_pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        canvas.mouseReleaseEvent(event)
+        return event
+
+    def test_release_over_input_port_attaches_wire(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        a_port = canvas.block_item("a").port_scene_pos("Q", PinDirection.OUTPUT)
+        t_in = canvas.block_item("t").port_scene_pos("IN", PinDirection.INPUT)
+        self._press(canvas, a_port)
+        assert canvas._wiring == ("a", "Q")
+        self._release(canvas, t_in)
+        assert canvas._wiring is None
+        assert canvas._rubber is None
+        assert canvas.has_wire("a", "Q", "t", "IN")
+
+    def test_release_over_source_block_input_refused(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        a_port = canvas.block_item("a").port_scene_pos("Q", PinDirection.OUTPUT)
+        a_in = canvas.block_item("a").port_scene_pos("IN1", PinDirection.INPUT)
+        self._press(canvas, a_port)
+        self._release(canvas, a_in)
+        assert canvas._wiring is None
+        assert canvas.wires() == []
+
+    def test_release_over_empty_space_cancels_without_wire(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        self._press(canvas, canvas.block_item("a").port_scene_pos("Q", PinDirection.OUTPUT))
+        self._release(canvas, QPointF(9000, 9000))
+        assert canvas._wiring is None
+        assert canvas.wires() == []
+
+    def test_release_skips_output_hit_and_attaches_to_input(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        # Regression: ports_at returns ports in scene stacking order, so the
+        # release point's topmost hit may be an output port. The wire must
+        # not be silently dropped when a valid input port is also under it.
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        canvas._start_wiring("a", "Q")
+        canvas.ports_at = lambda pos: [  # type: ignore[method-assign]
+            ("a", "Q", PinDirection.OUTPUT),
+            ("t", "IN", PinDirection.INPUT),
+        ]
+        self._release(canvas, canvas.block_item("t").port_scene_pos("IN", PinDirection.INPUT))
+        assert canvas._wiring is None
+        assert canvas.has_wire("a", "Q", "t", "IN")
+
+    def test_moving_block_updates_wire_geometry(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        canvas.add_wire("a", "Q", "t", "IN")
+        wire = canvas._wires[("a", "Q", "t", "IN")]
+        canvas.block_item("a").setPos(300, 400)
+        assert wire.line().p1() == canvas.block_item("a").port_scene_pos("Q", PinDirection.OUTPUT)
+        assert wire.line().p2() == canvas.block_item("t").port_scene_pos("IN", PinDirection.INPUT)
+
+    def test_drag_move_pulls_wires_along(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        # Regression: interactive block moves bypass Python setPos overrides
+        # (Qt drives them from C++), so the scene itself must rewire on
+        # mouse move/release. The wire must follow the dragged block.
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        canvas.add_wire("a", "Q", "t", "IN")
+        wire = canvas._wires[("a", "Q", "t", "IN")]
+
+        a_item = canvas.block_item("a")
+        start_view = canvas.mapFromScene(a_item.scenePos() + QPointF(80, 13))
+        target_view = QPointF(start_view.x() + 120, start_view.y() + 90)
+        QTest.mousePress(canvas.viewport(), Qt.MouseButton.LeftButton, pos=start_view)
+        QTest.mouseMove(canvas.viewport(), pos=target_view.toPoint())
+        QTest.mouseRelease(canvas.viewport(), Qt.MouseButton.LeftButton, pos=target_view.toPoint())
+
+        assert a_item.pos() == target_view - QPointF(80, 13)
+        assert wire.line().p1() == a_item.port_scene_pos("Q", PinDirection.OUTPUT)
+        assert wire.line().p2() == canvas.block_item("t").port_scene_pos("IN", PinDirection.INPUT)
 
 
 class TestBlockParameters:

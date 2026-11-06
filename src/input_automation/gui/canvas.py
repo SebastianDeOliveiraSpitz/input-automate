@@ -219,6 +219,29 @@ class RecentProjects:
         self._settings.setValue("recent/projects", paths)
 
 
+class _CanvasScene(QGraphicsScene):
+    """Scene that keeps wire geometry in sync while blocks are moved.
+
+    Qt never delivers ``ItemPositionHasChanged`` for programmatic
+    ``setPos()`` or for interactive drags, so wires would freeze in place
+    when a block moves (the "freeze when moved" bug). ``BlockItem.setPos``
+    covers programmatic moves; this scene covers interactive drags, which
+    Qt drives from C++ and therefore bypasses Python ``setPos`` overrides.
+    """
+
+    def __init__(self, canvas: BlockCanvas) -> None:
+        super().__init__(canvas)
+        self._canvas = canvas
+
+    def mouseMoveEvent(self, event: Any) -> None:
+        super().mouseMoveEvent(event)
+        self._canvas._rewire_geometry()
+
+    def mouseReleaseEvent(self, event: Any) -> None:
+        super().mouseReleaseEvent(event)
+        self._canvas._rewire_geometry()
+
+
 class BlockItem(QGraphicsRectItem):
     """One block: title bar, body, input pins on the left, output pins on the right."""
 
@@ -253,6 +276,14 @@ class BlockItem(QGraphicsRectItem):
         count = max(len(self.input_pins), len(self.output_pins), 1)
         height = TITLE_HEIGHT + PAD + count * PIN_ROW + PAD
         self.setRect(0, 0, BLOCK_WIDTH, max(height, 70))
+
+    def setPos(self, *args: Any) -> None:
+        super().setPos(*args)
+        # Qt does not deliver ItemPositionHasChanged on setPos (nor while an
+        # item is being dragged), so wires would freeze in place when a
+        # block moves. Notify the canvas so all wire geometry is recomputed.
+        if self._canvas is not None:
+            self._canvas._block_moved(self)
 
     def input_pin_names(self) -> list[str]:
         return [pin.name for pin in self.input_pins]
@@ -415,7 +446,7 @@ class BlockCanvas(QGraphicsView):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setViewport(_CanvasViewport(self))
-        self._scene = QGraphicsScene(self)
+        self._scene = _CanvasScene(self)
         self._scene.setSceneRect(QRectF(-2000, -2000, 4000, 4000))
         self.setScene(self._scene)
         self.setAcceptDrops(True)
@@ -724,17 +755,31 @@ class BlockCanvas(QGraphicsView):
             return
         super().mouseMoveEvent(event)
 
+    def _wiring_target(
+        self, hits: list[tuple[str, str, PinDirection]], src_block: str
+    ) -> tuple[str, str] | None:
+        """First input-port hit on a block other than the wiring source.
+
+        ``ports_at`` returns ports in scene stacking order, so the topmost
+        hit may be an output port or the source block's own input — neither
+        can receive a new wire. Searching all hits keeps a drag released
+        over a cluster of ports from being silently dropped ("line won't
+        attach to the tile").
+        """
+        for block_id, pin_name, direction in hits:
+            if direction is PinDirection.INPUT and block_id != src_block:
+                return block_id, pin_name
+        return None
+
     def mouseReleaseEvent(self, event: Any) -> None:
         if self._wiring is not None:
             hits = self.ports_at(self.mapToScene(event.pos()))
-            if (
-                hits
-                and hits[0][2] is PinDirection.INPUT
-                and hits[0][0] != self._wiring[0]
-            ):
+            target = self._wiring_target(hits, self._wiring[0])
+            if target is not None:
                 src_block, src_pin = self._wiring
                 with contextlib.suppress(WireGraphError):
-                    self.add_wire(src_block, src_pin, hits[0][0], hits[0][1])
+                    # duplicate or type mismatch: silently refuse
+                    self.add_wire(src_block, src_pin, *target)
             self._cancel_wiring()
             return
         super().mouseReleaseEvent(event)
