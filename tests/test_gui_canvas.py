@@ -859,3 +859,44 @@ class TestHeadlessRunFromCanvas:
         assert ((ecodes.EV_KEY, ecodes.KEY_A), 0, True) in outputs.device_events(
             "out-kb"
         )
+
+
+class TestViewMenu:
+    def settings(self, tmp_path) -> QSettings:
+        return QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+
+    def test_view_menu_toggles_properties_dock(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        win.show()
+        assert win._properties_dock.isVisible()
+        assert win._view_properties_act.isChecked()
+
+        win._view_properties_act.toggle()
+        assert not win._properties_dock.isVisible()
+        assert not win._view_properties_act.isChecked()
+
+        win._view_properties_act.toggle()
+        assert win._properties_dock.isVisible()
+        assert win._view_properties_act.isChecked()
+
+    def test_view_menu_toggles_palette_dock(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        win.show()
+        assert win._palette_dock.isVisible()
+        win._view_palette_act.toggle()
+        assert not win._palette_dock.isVisible()
+        assert not win._view_palette_act.isChecked()
+
+    def test_closing_dock_unchecks_view_action(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Closing a dock with its close button unchecks the View action so the
+        panel stays reopenable from the menu."""
+        win = CanvasWindow(settings=self.settings(tmp_path))
+        qtbot.addWidget(win)
+        win.show()
+        win._properties_dock.hide()
+        assert not win._view_properties_act.isChecked()
+        win._view_properties_act.toggle()
+        assert win._properties_dock.isVisible()
+        assert win._view_properties_act.isChecked()

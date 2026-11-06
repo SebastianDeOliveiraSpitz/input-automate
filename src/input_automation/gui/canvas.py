@@ -1013,18 +1013,18 @@ class CanvasWindow(QMainWindow):
 
         palette = BlockPalette()
         self._canvas.set_palette(palette)
-        dock = QDockWidget("Palette", self)
-        dock.setWidget(palette)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self._palette_dock = QDockWidget("Palette", self)
+        self._palette_dock.setWidget(palette)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._palette_dock)
 
         self._properties = PropertiesPanel()
         self._canvas.selectionChanged.connect(
             lambda: self._properties.set_block(self._canvas.selected_block())
         )
         self._properties.parametersChanged.connect(self._canvas.graphChanged)
-        props_dock = QDockWidget("Properties", self)
-        props_dock.setWidget(self._properties)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, props_dock)
+        self._properties_dock = QDockWidget("Properties", self)
+        self._properties_dock.setWidget(self._properties)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._properties_dock)
 
         bar = self.addToolBar("canvas")
         self._new_act = QAction("New", self)
@@ -1126,6 +1126,23 @@ class CanvasWindow(QMainWindow):
         file_menu.addAction(exit_act)
         file_menu.aboutToShow.connect(self._refresh_recent_menu)
         self._refresh_recent_menu()
+
+        view_menu = self.menuBar().addMenu("&View")
+        self._view_properties_act = QAction("Properties", self, checkable=True)
+        self._view_properties_act.setChecked(self._properties_dock.isVisible())
+        self._view_properties_act.toggled.connect(self._properties_dock.setVisible)
+        self._properties_dock.visibilityChanged.connect(
+            self._view_properties_act.setChecked
+        )
+        view_menu.addAction(self._view_properties_act)
+
+        self._view_palette_act = QAction("Palette", self, checkable=True)
+        self._view_palette_act.setChecked(self._palette_dock.isVisible())
+        self._view_palette_act.toggled.connect(self._palette_dock.setVisible)
+        self._palette_dock.visibilityChanged.connect(
+            self._view_palette_act.setChecked
+        )
+        view_menu.addAction(self._view_palette_act)
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()
