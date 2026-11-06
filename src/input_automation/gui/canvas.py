@@ -47,6 +47,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
+    QCompleter,
     QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
@@ -56,6 +58,7 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -63,6 +66,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSpinBox,
     QStyle,
     QStyleOptionGraphicsItem,
@@ -70,6 +74,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from input_automation.devices.discovery import list_devices
 from input_automation.engine.block import Block
 from input_automation.engine.pins import Pin, PinTypeError
 from input_automation.engine.registry import default_registry
@@ -82,6 +87,8 @@ from input_automation.engine.wires import (
     WireGraphError,
     WireTypeError,
 )
+from input_automation.gui.recording import InputRecorder
+from input_automation.io.evdev import code_names
 from input_automation.project import (
     Block as ProjectBlock,
 )
@@ -972,6 +979,10 @@ class PropertiesPanel(QWidget):
         super().__init__(parent)
         self._block: BlockItem | None = None
         self._editors: dict[str, tuple[QWidget, PinDType]] = {}
+        self._device_combo: QComboBox | None = None
+        self._record_button: QPushButton | None = None
+        self._record_status: QLabel | None = None
+        self._recorder = InputRecorder(parent=self)
 
         layout = QVBoxLayout(self)
         self._title = QLabel("No block selected")
@@ -981,6 +992,7 @@ class PropertiesPanel(QWidget):
         layout.addStretch(1)
 
     def set_block(self, block: BlockItem | None) -> None:
+        self._recorder.stop()
         self._block = block
         self._rebuild()
 
@@ -996,13 +1008,125 @@ class PropertiesPanel(QWidget):
         self._title.setText(f"{self._block.type_name}  ·  {self._block.block_id}")
         template = default_registry.create(self._block.type_name, self._block.block_id)
         parameters = dict(self._block.parameters)
+        is_input = self._block.type_name == "INPUT"
 
         for name, pin in template.inputs.items():
             if pin.value is None:  # no default -> not a configurable parameter
                 continue
+            if is_input and name == "DEVICE":
+                continue  # replaced by the device picker row below
             editor = self._editor(name, pin.dtype, parameters.get(name, pin.value))
+            if is_input and name == "CODE" and isinstance(editor, QLineEdit):
+                self._attach_code_completer(editor)
             self._form.addRow(QLabel(name), editor)
             self._editors[name] = (editor, pin.dtype)
+        if is_input:
+            self._build_device_row(parameters)
+            self._build_record_row()
+
+    @staticmethod
+    def _attach_code_completer(editor: QLineEdit) -> None:
+        """Suggest evdev code names (``KEY_A``, ``BTN_LEFT``, …) while typing."""
+        completer = QCompleter(code_names(), editor)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        editor.setCompleter(completer)
+
+    def _build_device_row(self, parameters: dict[str, Any]) -> None:
+        assert self._block is not None
+        combo = QComboBox()
+        combo.setEditable(True)
+        self._populate_devices(combo)
+
+        def device_changed(index: int) -> None:
+            block = self._block
+            if block is None:
+                return
+            data = combo.itemData(index)
+            path = data if isinstance(data, str) else combo.currentText()
+            block.parameters["DEVICE"] = path
+            self.parametersChanged.emit()
+
+        combo.currentIndexChanged.connect(device_changed)
+
+        current = str(parameters.get("DEVICE") or "")
+        match = next(
+            (
+                index
+                for index in range(combo.count())
+                if combo.itemData(index) == current
+            ),
+            None,
+        )
+        if match is not None:
+            combo.setCurrentIndex(match)
+        elif current:
+            combo.setEditText(current)
+
+        refresh = QPushButton("Refresh")
+        refresh.setToolTip("Re-scan /dev/input for available devices")
+        refresh.clicked.connect(lambda _checked: self._populate_devices(combo))
+
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(combo, 1)
+        layout.addWidget(refresh)
+        self._device_combo = combo
+        self._form.addRow(QLabel("Device"), row)
+
+    def _populate_devices(self, combo: QComboBox) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        try:
+            devices = list_devices()
+        except OSError:
+            devices = []
+        for info in devices:
+            kinds = ", ".join(sorted(info.kinds))
+            combo.addItem(f"{info.name} [{kinds}] ({info.path})", info.path)
+        combo.blockSignals(False)
+
+    def _build_record_row(self) -> None:
+        assert self._block is not None
+        button = QPushButton("Record key/button…")
+        status = QLabel("")
+        status.setStyleSheet("color: #6b7280; font-size: 11px;")
+        self._record_button = button
+        self._record_status = status
+
+        def start_recording() -> None:
+            block = self._block
+            if block is None:
+                return
+            path = str(block.parameters.get("DEVICE") or "")
+            self._recorder.start([path] if path else None)
+            button.setEnabled(False)
+            status.setText("recording… press a key or button on the device")
+
+        def on_recorded(code_name: str) -> None:
+            button.setEnabled(True)
+            status.setText(f"recorded {code_name}")
+            editor = self._editors.get("CODE")
+            if editor is not None:
+                edit_widget = editor[0]
+                if isinstance(edit_widget, QLineEdit):
+                    edit_widget.setText(code_name)
+
+        def on_failed(message: str) -> None:
+            button.setEnabled(True)
+            status.setText(f"record failed: {message}")
+
+        button.clicked.connect(start_recording)
+        self._recorder.recorded.connect(on_recorded)
+        self._recorder.failed.connect(on_failed)
+
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(button)
+        layout.addWidget(status, 1)
+        self._form.addRow(QLabel("Record"), row)
 
     def _editor(
         self, name: str, dtype: PinDType, value: bool | int | float | str | None

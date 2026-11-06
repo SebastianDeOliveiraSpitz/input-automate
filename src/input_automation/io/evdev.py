@@ -73,6 +73,23 @@ def resolve_evdev_code(name: object) -> int | None:
     return None
 
 
+def code_names() -> list[str]:
+    """All evdev code names resolvable by :func:`resolve_evdev_code`, sorted.
+
+    Covers keys (``KEY_*``), buttons (``BTN_*``) and axes (``ABS_*``,
+    ``REL_*``) — the names offered as suggestions when configuring an
+    :class:`~input_automation.engine.io_blocks.InputBlock`'s ``CODE`` pin.
+    """
+    names = {
+        name
+        for name, code in ecodes.ecodes.items()
+        if isinstance(code, int)
+        and not isinstance(code, bool)
+        and name.startswith(("KEY_", "BTN_", "ABS_", "REL_"))
+    }
+    return sorted(names)
+
+
 class EvdevInputProvider:
     """Poll evdev devices and drive ``INPUT`` block output pins.
 

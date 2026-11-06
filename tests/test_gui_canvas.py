@@ -5,11 +5,13 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPointF, QSettings, Qt
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPointF, QSettings, Qt, Signal
 from PySide6.QtGui import QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QComboBox, QFileDialog, QPushButton
 
+import input_automation.gui.canvas as canvas_module
+from input_automation.devices.discovery import DeviceInfo
 from input_automation.engine.block import Block
 from input_automation.engine.registry import default_registry
 from input_automation.engine.wires import (
@@ -27,6 +29,7 @@ from input_automation.gui.canvas import (
     PropertiesPanel,
     canvas_to_project,
 )
+from input_automation.gui.recording import InputRecorder
 from input_automation.project import save_project
 from input_automation.project.pins import PinDirection
 
@@ -1013,3 +1016,254 @@ class TestViewMenu:
         win._view_properties_act.toggle()
         assert win._properties_dock.isVisible()
         assert win._view_properties_act.isChecked()
+
+
+class _FakeListener:
+    """evdev-like listener stand-in for InputRecorder tests."""
+
+    def __init__(
+        self,
+        paths: list[str] | None = None,
+        callback: object | None = None,
+    ) -> None:
+        self.paths = paths
+        self.callback = callback
+        self.started = False
+        self.stopped = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class TestInputRecorder:
+    """Headless tests for InputRecorder: synthetic events, no /dev/input."""
+
+    def test_start_stop_wires_listener(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        del qtbot  # purely synchronous
+        listener = _FakeListener()
+        captured: dict[str, object] = {}
+        recorder = InputRecorder(
+            listener_factory=lambda **kwargs: captured.update(kwargs) or listener
+        )
+        recorder.start(["/dev/input/event0"])
+        assert listener.started
+        assert captured["paths"] == ["/dev/input/event0"]
+        assert "callback" in captured
+        recorder.stop()
+        assert listener.stopped
+
+    def test_start_all_devices_when_no_path(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        del qtbot
+        listener = _FakeListener()
+        captured: dict[str, object] = {}
+        recorder = InputRecorder(
+            listener_factory=lambda **kwargs: captured.update(kwargs) or listener
+        )
+        recorder.start()
+        assert captured["paths"] is None
+
+    def test_press_emits_code_name_and_stops(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        from input_automation.devices.listener import InputEvent
+
+        listener = _FakeListener()
+        recorder = InputRecorder(listener_factory=lambda **kwargs: listener)
+        recorder.start(["/dev/input/event0"])
+        listener.callback = recorder._on_event
+        with qtbot.waitSignal(recorder.recorded) as blocker:
+            listener.callback(
+                InputEvent(
+                    ts=1.0,
+                    path="/dev/input/event0",
+                    etype="key",
+                    code=30,
+                    code_name="KEY_A",
+                    value=1,
+                    action="press",
+                )
+            )
+        assert blocker.args == ["KEY_A"]
+        assert listener.stopped
+
+    def test_release_and_repeat_are_ignored(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        from input_automation.devices.listener import InputEvent
+
+        listener = _FakeListener()
+        recorder = InputRecorder(listener_factory=lambda **kwargs: listener)
+        for action in ("release", "repeat"):
+            recorder._on_event(
+                InputEvent(
+                    ts=1.0,
+                    path="/dev/input/event0",
+                    etype="key",
+                    code=30,
+                    code_name="KEY_A",
+                    value=0,
+                    action=action,
+                )
+            )
+        assert not listener.stopped
+
+
+class TestInputConfig:
+    """INPUT block configuration: device picker, code suggestions, recording."""
+
+    def _panel(
+        self,
+        qtbot,
+        monkeypatch,
+        devices: list[DeviceInfo] | None = None,
+        recorder_cls: type[QObject] | None = None,
+    ) -> PropertiesPanel:
+        monkeypatch.setattr(
+            canvas_module, "list_devices", lambda: devices or []
+        )
+        if recorder_cls is not None:
+            monkeypatch.setattr(canvas_module, "InputRecorder", recorder_cls)
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("INPUT", "i1")
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        panel.set_block(canvas.block_item("i1"))
+        return panel
+
+    def test_non_input_block_has_no_device_picker(
+        self, qtbot, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setattr(canvas_module, "list_devices", lambda: [])
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        panel.set_block(canvas.block_item("a"))
+        assert panel._editors == {}
+        assert panel.findChildren(QComboBox) == []
+        assert panel.findChildren(QPushButton) == []
+
+    def test_device_picker_populated_from_list_devices(
+        self, qtbot, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        devices = [
+            DeviceInfo(
+                path="/dev/input/event0",
+                name="Test Keyboard",
+                phys="",
+                kinds=frozenset({"keyboard"}),
+            ),
+            DeviceInfo(
+                path="/dev/input/event1",
+                name="Test Mouse",
+                phys="",
+                kinds=frozenset({"mouse"}),
+            ),
+        ]
+        panel = self._panel(qtbot, monkeypatch, devices)
+        assert panel._device_combo is not None
+        assert panel._device_combo.count() == 2
+        assert panel._device_combo.itemData(0) == "/dev/input/event0"
+        assert panel._device_combo.itemData(1) == "/dev/input/event1"
+        assert "Test Keyboard" in panel._device_combo.itemText(0)
+
+    def test_device_selection_stored_in_block_parameters(
+        self, qtbot, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        devices = [
+            DeviceInfo(
+                path="/dev/input/event0",
+                name="Test Keyboard",
+                phys="",
+                kinds=frozenset({"keyboard"}),
+            )
+        ]
+        panel = self._panel(qtbot, monkeypatch, devices)
+        item = panel._block
+        assert item is not None
+        # addItem() pre-selects index 0 with signals blocked, so move away first
+        panel._device_combo.setCurrentIndex(-1)
+        with qtbot.waitSignal(panel.parametersChanged):
+            panel._device_combo.setCurrentIndex(0)
+        assert item.parameters == {"DEVICE": "/dev/input/event0"}
+
+    def test_typed_device_path_is_kept(self, qtbot, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        panel = self._panel(qtbot, monkeypatch, [])
+        item = panel._block
+        assert item is not None
+        panel._device_combo.setEditText("/dev/input/event9")
+        panel._device_combo.currentIndexChanged.emit(-1)
+        assert item.parameters == {"DEVICE": "/dev/input/event9"}
+
+    def test_code_editor_offers_code_name_completer(
+        self, qtbot, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        panel = self._panel(qtbot, monkeypatch)
+        editor = panel._editors["CODE"][0]
+        completer = editor.completer()
+        assert completer is not None
+        assert "KEY_A" in completer.model().stringList()
+        assert "BTN_LEFT" in completer.model().stringList()
+
+    def test_record_button_starts_recorder_for_selected_device(
+        self, qtbot, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        started: list[object] = []
+
+        class _FakeRecorder(QObject):
+            recorded = Signal(str)
+            failed = Signal(str)
+
+            def __init__(self, parent: QObject | None = None) -> None:
+                super().__init__(parent)
+                self.started_paths: list[str] | None = None
+                self.stopped = False
+
+            def start(self, paths: list[str] | None = None) -> None:
+                started.append(paths)
+                self.started_paths = paths
+
+            def stop(self) -> None:
+                self.stopped = True
+
+        devices = [
+            DeviceInfo(
+                path="/dev/input/event0",
+                name="Test Keyboard",
+                phys="",
+                kinds=frozenset({"keyboard"}),
+            )
+        ]
+        panel = self._panel(qtbot, monkeypatch, devices, recorder_cls=_FakeRecorder)
+        # addItem() pre-selects index 0 with signals blocked, so move away first
+        panel._device_combo.setCurrentIndex(-1)
+        with qtbot.waitSignal(panel.parametersChanged):
+            panel._device_combo.setCurrentIndex(0)
+
+        record = next(
+            button
+            for button in panel.findChildren(QPushButton)
+            if button.text() == "Record key/button…"
+        )
+        record.click()
+        recorder = panel._recorder
+        assert isinstance(recorder, _FakeRecorder)
+        assert recorder.started_paths == ["/dev/input/event0"]
+        assert not record.isEnabled()
+        assert panel._record_status.text().startswith("recording")
+
+    def test_recorded_code_writes_code_parameter(
+        self, qtbot, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        panel = self._panel(qtbot, monkeypatch)
+        recorder = panel._recorder
+        assert panel._record_status.text() == ""
+        with qtbot.waitSignal(panel.parametersChanged):
+            recorder.recorded.emit("KEY_A")
+        item = panel._block
+        assert item is not None
+        assert item.parameters["CODE"] == "KEY_A"
+        assert panel._editors["CODE"][0].text() == "KEY_A"
+        assert panel._record_status.text() == "recorded KEY_A"
+        assert panel._record_button is not None and panel._record_button.isEnabled()

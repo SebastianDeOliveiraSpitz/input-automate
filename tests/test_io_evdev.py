@@ -17,7 +17,7 @@ from input_automation.engine import (
     WireGraph,
 )
 from input_automation.engine.io_blocks import InputBlock
-from input_automation.io.evdev import EvdevInputProvider, resolve_evdev_code
+from input_automation.io.evdev import EvdevInputProvider, code_names, resolve_evdev_code
 
 
 class _AbsInfo:
@@ -213,3 +213,26 @@ def test_provider_axis_at_center() -> None:
     _run_once(provider, in1=block)
     assert block.output("Q").value is False
     assert block.output("VALUE").value == 0
+
+
+class TestCodeNames:
+    def test_includes_common_keys_and_buttons(self) -> None:
+        names = code_names()
+        assert "KEY_A" in names
+        assert "KEY_Q" in names
+        assert "BTN_LEFT" in names
+        assert "BTN_RIGHT" in names
+        assert "ABS_X" in names
+
+    def test_every_name_resolves_back_to_its_code(self) -> None:
+        for name in code_names():
+            assert resolve_evdev_code(name) is not None
+
+    def test_short_key_form_resolves(self) -> None:
+        assert resolve_evdev_code("q") == resolve_evdev_code("KEY_Q")
+        assert resolve_evdev_code("z") == resolve_evdev_code("KEY_Z")
+
+    def test_unknown_inputs_return_none(self) -> None:
+        assert resolve_evdev_code("") is None
+        assert resolve_evdev_code("NOT_A_CODE") is None
+        assert resolve_evdev_code(42) is None
