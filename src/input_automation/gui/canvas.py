@@ -88,7 +88,9 @@ from input_automation.engine.wires import (
     WireTypeError,
 )
 from input_automation.gui.recording import InputRecorder
-from input_automation.io.evdev import code_names
+from input_automation.io.capture import CaptureInputProvider
+from input_automation.io.evdev import EvdevInputProvider, code_names
+from input_automation.io.uinput import UinputOutputProvider
 from input_automation.project import (
     Block as ProjectBlock,
 )
@@ -1242,6 +1244,9 @@ class CanvasWindow(QMainWindow):
         self._canvas = BlockCanvas()
         self._executor: ScanExecutor | None = None
         self._timer: QTimer | None = None
+        self._reader: EvdevInputProvider | None = None
+        self._capturer: CaptureInputProvider | None = None
+        self._writer: UinputOutputProvider | None = None
         self._cycle_count = 0
         self._path: Path | None = None
         self._dirty = False
@@ -1316,7 +1321,21 @@ class CanvasWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - report in the status bar
             self.statusBar().showMessage(f"invalid graph: {exc}", 5000)
             return
-        self._executor = ScanExecutor(graph, cycle_time_s=RUN_CYCLE_MS / 1000)
+        reader = EvdevInputProvider()
+        capturer = CaptureInputProvider()
+        writer = UinputOutputProvider()
+
+        def read_inputs(graph: WireGraph) -> None:
+            reader(graph)
+            capturer(graph)
+
+        self._executor = ScanExecutor(
+            graph,
+            cycle_time_s=RUN_CYCLE_MS / 1000,
+            read_inputs=read_inputs,
+            write_outputs=writer,
+        )
+        self._reader, self._capturer, self._writer = reader, capturer, writer
         self._cycle_count = 0
         timer = QTimer(self)
         timer.setInterval(RUN_CYCLE_MS)
@@ -1344,6 +1363,13 @@ class CanvasWindow(QMainWindow):
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
+        for provider in (self._reader, self._capturer, self._writer):
+            if provider is not None:
+                with contextlib.suppress(Exception):
+                    provider.close()
+        self._reader = None
+        self._capturer = None
+        self._writer = None
         self._executor = None
         self._run_action.setChecked(False)
         self._run_action.setText("Run")

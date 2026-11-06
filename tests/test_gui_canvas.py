@@ -719,7 +719,7 @@ class TestRunStop:
         assert win._run_action.text() == "Run"
         assert "unknown parameter" in win.statusBar().currentMessage().lower()
 
-    def test_live_pin_values_update_while_running(self, qtbot) -> None:
+    def test_live_pin_values_update_while_running(self, qtbot, monkeypatch) -> None:
         win = CanvasWindow()
         qtbot.addWidget(win)
         canvas = win._canvas
@@ -730,15 +730,32 @@ class TestRunStop:
         canvas.add_wire("btn", "Q", "a", "IN1")
         canvas.add_wire("btn", "Q", "a", "IN2")
 
+        # The scan engine now wires real IO providers, so a cycle updates the
+        # input block's output pins from the provider instead of leaving them None.
+        provider_calls: list[WireGraph] = []
+
+        class _FakeEvdev:
+            def __call__(self, graph: WireGraph) -> None:
+                provider_calls.append(graph)
+                btn_block = graph.block("btn")
+                # only seed the pin once; the test drives mid-run changes directly
+                if btn_block.output("Q").value is None:
+                    btn_block.output("Q").set(True)
+                    btn_block.output("VALUE").set(1)
+
+        monkeypatch.setattr(canvas_module, "EvdevInputProvider", lambda: _FakeEvdev())
+
         win._run_action.trigger()
+        assert win._executor is not None
+        # the immediate first cycle already invoked the wired read_inputs provider
+        assert provider_calls
 
         btn = canvas.block_item("btn")
         aand = canvas.block_item("a")
 
         win._run_cycle()
-        # no IO provider writes the input block's outputs -> Q stays None
-        assert btn.pin_value(PinDirection.OUTPUT, "Q") is None
-        assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
+        assert btn.pin_value(PinDirection.OUTPUT, "Q") is True
+        assert aand.pin_value(PinDirection.OUTPUT, "Q") is True
 
         # simulate an IO provider publishing a new input value mid-run
         win._executor.graph.block("btn").output("Q").set(True)

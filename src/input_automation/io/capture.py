@@ -18,6 +18,7 @@ screen capture. A backend failure or a malformed region/color spec yields
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Protocol
 
@@ -87,6 +88,19 @@ class CaptureInputProvider:
 
     def __init__(self, *, backend: _FrameSource | None = None) -> None:
         self._backend = backend or MockCaptureBackend()
+
+    def close(self) -> None:
+        """Release the capture backend if it holds any releasable resources.
+
+        Symmetrical with :class:`input_automation.io.evdev.EvdevInputProvider`
+        and :class:`input_automation.io.uinput.UinputOutputProvider`, both of
+        which expose :meth:`close` so a scan loop can tear down cleanly on stop.
+        """
+        backend = getattr(self, "_backend", None)
+        closer = getattr(backend, "close", None)
+        if callable(closer):
+            with contextlib.suppress(Exception):
+                closer()
 
     def __call__(self, graph: WireGraph) -> None:
         """Measure every ``CAPTURE`` block against one freshly grabbed frame."""
