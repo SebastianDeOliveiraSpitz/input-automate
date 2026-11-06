@@ -4,6 +4,7 @@ import contextlib
 import json
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Annotated
@@ -17,6 +18,8 @@ from input_automation.capture.base import CaptureError
 from input_automation.capture.factory import BACKEND_NAMES, create_backend
 from input_automation.devices.discovery import list_devices
 from input_automation.devices.listener import DeviceListener
+from input_automation.engine import ScanExecutor
+from input_automation.engine.scan import InputReader, OutputWriter
 from input_automation.io.evdev import EvdevInputProvider
 from input_automation.io.uinput import UinputOutputProvider
 from input_automation.output.virtual import (
@@ -25,13 +28,19 @@ from input_automation.output.virtual import (
     uinput_available,
 )
 from input_automation.project import Project, load_project, save_project
-from input_automation.project.runner import ProjectRunError, run_project
+from input_automation.project.runner import (
+    ProjectRunError,
+    build_graph,
+    run_project,
+)
 from input_automation.vision.primitives import (
     bar_fill_fraction,
     color_fraction,
     region_crop,
     template_match,
 )
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="Automate inputs on Linux (Wayland).")
 
@@ -251,9 +260,20 @@ def project_run(
         typer.Option(
             "--cycles",
             min=1,
-            help="Number of scan cycles to execute before exiting.",
+            help="Number of scan cycles to execute before exiting. "
+            "Ignored when --forever is given.",
         ),
     ] = 1,
+    forever: Annotated[
+        bool,
+        typer.Option(
+            "--forever",
+            "-f",
+            help="Run as a background scan engine: repeat cycles at the fixed "
+            "cycle time until interrupted (Ctrl+C). With --evdev/--uinput the "
+            "engine reads real devices and writes to virtual uinput devices.",
+        ),
+    ] = False,
     evdev: Annotated[
         bool,
         typer.Option(
@@ -271,21 +291,33 @@ def project_run(
         ),
     ] = False,
 ) -> None:
-    """Headless run: load the project, execute it through the scan engine,
-    print resulting output pin values, and exit.
+    """Headless run: load the project and execute it through the scan engine.
 
-    With --evdev/--uinput the engine is wired to real evdev/uinput devices;
-    without them the run is purely combinational (inputs keep defaults,
-    outputs are discarded), which is safe to run on any box.
+    By default the run is one-shot: execute ``--cycles`` scan cycles (default 1)
+    and exit, printing resulting output pin values. Without --evdev/--uinput the
+    run is purely combinational (inputs keep defaults, outputs discarded), safe
+    on any box.
+
+    With --forever the engine runs as a background scan engine: cycles repeat at
+    the fixed cycle time until interrupted, reading evdev inputs and writing
+    uinput outputs when those flags are given. Use --verbose to log every cycle.
     """
     try:
         project = load_project(path)
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"error: {path}: {exc}", err=True)
         raise typer.Exit(1) from None
+    if forever and cycles != 1:
+        typer.echo(
+            "error: --forever and --cycles are mutually exclusive", err=True
+        )
+        raise typer.Exit(1)
     read_inputs: EvdevInputProvider | None = EvdevInputProvider() if evdev else None
     write_outputs: UinputOutputProvider | None = UinputOutputProvider() if uinput else None
     try:
+        if forever:
+            _run_forever(project, read_inputs, write_outputs)
+            return
         results = run_project(
             project,
             cycles=cycles,
@@ -300,16 +332,58 @@ def project_run(
             if provider is not None:
                 with contextlib.suppress(Exception):
                     provider.close()
-    typer.echo(
-        f"project {project.name!r}: {len(project.blocks)} blocks, "
-        f"{len(project.wires)} wires — ran {cycles} cycle(s)"
+    if not forever:
+        typer.echo(
+            f"project {project.name!r}: {len(project.blocks)} blocks, "
+            f"{len(project.wires)} wires — ran {cycles} cycle(s)"
+        )
+        for block_id in sorted(results):
+            outputs = results[block_id]
+            if not outputs:
+                continue
+            pin_values = ", ".join(
+                f"{name}={value!r}" for name, value in outputs.items()
+            )
+            typer.echo(f"  {block_id}: {pin_values}")
+
+
+def _run_forever(
+    project: Project,
+    read_inputs: InputReader | None,
+    write_outputs: OutputWriter | None,
+) -> None:
+    """Run ``project`` as a background scan engine until interrupted.
+
+    Repeats scan cycles at the executor's fixed cycle time: each cycle reads
+    inputs (evdev when wired), evaluates every block in dependency order, and
+    writes outputs (uinput when wired). Every cycle is logged at DEBUG level
+    (visible with --verbose). Ctrl+C stops the engine gracefully.
+    """
+    graph = build_graph(project)
+    executor = ScanExecutor(
+        graph,
+        read_inputs=read_inputs,
+        write_outputs=write_outputs,
     )
-    for block_id in sorted(results):
-        outputs = results[block_id]
-        if not outputs:
-            continue
-        pin_values = ", ".join(f"{name}={value!r}" for name, value in outputs.items())
-        typer.echo(f"  {block_id}: {pin_values}")
+    stop_event = threading.Event()
+    cycle = 0
+    typer.echo(
+        f"project {project.name!r}: background scan engine running "
+        f"(Ctrl+C to stop)..."
+    )
+    try:
+        while not stop_event.is_set():
+            cycle += 1
+            elapsed = executor.run_once()
+            logger.debug("scan cycle %d in %.4fs", cycle, elapsed)
+            remaining = executor.cycle_time_s - elapsed
+            if remaining > 0:
+                stop_event.wait(remaining)
+    except KeyboardInterrupt:
+        stop_event.set()
+    typer.echo(
+        f"project {project.name!r}: scan engine stopped after {cycle} cycle(s)"
+    )
 
 
 def _parse_color(spec: str) -> tuple[int, int, int]:

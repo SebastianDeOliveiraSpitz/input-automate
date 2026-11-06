@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from input_automation.cli import app
@@ -293,3 +294,36 @@ class TestProjectRun:
         assert result.exit_code == 0, result.output
         assert "ran 1 cycle(s)" in result.output
         assert created == ["in", "out", "in-close", "out-close"], created
+
+    def test_run_forever_stops_on_interrupt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--forever runs cycles until Ctrl+C, then stops cleanly (exit 0)."""
+        path = self._and_project(tmp_path)
+
+        calls: list[int] = []
+
+        class FakeExecutor:
+            def __init__(self, graph: object, **kwargs: object) -> None:
+                self.graph = graph
+                self.cycle_time_s = 0.02
+
+            def run_once(self) -> float:
+                calls.append(1)
+                raise KeyboardInterrupt()
+
+        monkeypatch.setattr("input_automation.cli.ScanExecutor", FakeExecutor)
+        result = runner.invoke(app, ["project", "run", str(path), "--forever"])
+        assert result.exit_code == 0, result.output
+        assert calls == [1], calls
+        assert "background scan engine running" in result.output
+        assert "scan engine stopped after 1 cycle(s)" in result.output
+
+    def test_run_forever_rejects_cycles(self, tmp_path: Path) -> None:
+        """--forever and --cycles are mutually exclusive."""
+        path = self._and_project(tmp_path)
+        result = runner.invoke(
+            app, ["project", "run", str(path), "--forever", "--cycles", "3"]
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
