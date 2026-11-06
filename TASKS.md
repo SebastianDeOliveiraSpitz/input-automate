@@ -23,12 +23,10 @@ New work goes in GitHub issues with `type:*`, `priority:*`, and `status:*` label
 - [x] T17: README
 - [x] T18: Packaging
 
-## M5 — Legacy cleanup (pending, convert to issues)
+## M5 — Legacy cleanup (complete)
 - [x] C1: Remove legacy tile editor GUI
 - [x] C2: Remove legacy macro system
 - [x] C3: Remove legacy daemon
 - [x] C4: Remove legacy capture/devices/output/triggers/vision modules
 - [x] C5: Remove legacy CLI commands
 - [x] C6: Remove legacy tests for removed modules
-
-Create GitHub issues for C1–C6 if you want the agent to complete them.
