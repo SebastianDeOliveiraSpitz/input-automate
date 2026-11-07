@@ -73,24 +73,33 @@ class UinputOutputProvider:
     def __init__(
         self,
         *,
-        open_device_fn: Callable[[str, list[tuple[int, object]]], _DeviceWriter]
+        open_device_fn: Callable[[str, list[tuple[int, ...]]], _DeviceWriter]
         | None = None,
     ) -> None:
         self._opener = open_device_fn or self._open_real
         self._devices: dict[str, _DeviceWriter] = {}
         self._last: dict[tuple[str, int], int] = {}
+        self._open_failures: set[str] = set()
 
     def close(self) -> None:
-        """Close every cached virtual device (releases any stuck keys)."""
+        """Close every cached virtual device (releases any stuck keys).
+
+        python-uinput's :class:`uinput.Device` exposes :meth:`destroy` rather
+        than :meth:`close`; fakes expose :meth:`close`. Accept either so real
+        devices are always torn down on stop.
+        """
         for device in self._devices.values():
-            with contextlib.suppress(OSError):
-                device.close()
+            closer = getattr(device, "close", None) or getattr(device, "destroy", None)
+            if closer is not None:
+                with contextlib.suppress(OSError):
+                    closer()
         self._devices.clear()
         self._last.clear()
+        self._open_failures.clear()
 
     @staticmethod
     def _open_real(
-        name: str, specs: list[tuple[int, object]]
+        name: str, specs: list[tuple[int, ...]]
     ) -> _DeviceWriter:
         import uinput as uinput_module
 
@@ -119,8 +128,12 @@ class UinputOutputProvider:
                     codes_by_type.setdefault(etype, []).append(code)
                 try:
                     device = self._opener(name, self._build_specs(codes_by_type))
-                except OSError as exc:
-                    logger.debug("cannot open uinput device %s: %s", name, exc)
+                except Exception as exc:  # noqa: BLE001 - a bad device must never abort a scan cycle
+                    if name not in self._open_failures:
+                        self._open_failures.add(name)
+                        logger.warning("cannot open uinput device %s: %s", name, exc)
+                    else:
+                        logger.debug("cannot open uinput device %s: %s", name, exc)
                     continue
                 self._devices[name] = device
             for block, etype, code in entries:
@@ -142,15 +155,20 @@ class UinputOutputProvider:
     @staticmethod
     def _build_specs(
         codes_by_type: dict[int, list[int]],
-    ) -> list[tuple[int, object]]:
-        """uinput.Device capability specs from the collected (type, code) set."""
-        specs: list[tuple[int, object]] = []
+    ) -> list[tuple[int, ...]]:
+        """uinput.Device capability specs from the collected (type, code) set.
+
+        The python-uinput binding wants one ``(type, code)`` tuple per
+        capability -- and ``(type, code, min, max, fuzz, flat)`` for absolute
+        axes -- not one tuple per type carrying a list of codes.
+        """
+        specs: list[tuple[int, ...]] = []
         for etype in sorted(codes_by_type):
-            codes = sorted(set(codes_by_type[etype]))
-            if etype == ecodes.EV_ABS:
-                specs.append((etype, [(code, 0, 255, 0, 0) for code in codes]))
-            else:
-                specs.append((etype, codes))
+            for code in sorted(set(codes_by_type[etype])):
+                if etype == ecodes.EV_ABS:
+                    specs.append((etype, code, 0, 255, 0, 0))
+                else:
+                    specs.append((etype, code))
         return specs
 
     @staticmethod

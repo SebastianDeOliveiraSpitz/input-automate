@@ -117,7 +117,7 @@ class MockEvdevInputProvider(EvdevInputProvider):
 class _MockUinputDevice:
     """Recording virtual device: appends every emit() instead of driving the kernel."""
 
-    def __init__(self, name: str, specs: list[tuple[int, object]]) -> None:
+    def __init__(self, name: str, specs: list[tuple[int, ...]]) -> None:
         self.name = name
         self.specs = specs
         self.events: list[tuple[tuple[int, int], int, bool]] = []
@@ -142,7 +142,7 @@ class MockUinputOutputProvider(UinputOutputProvider):
         super().__init__(open_device_fn=self._open_mock)
 
     def _open_mock(
-        self, name: str, specs: list[tuple[int, object]]
+        self, name: str, specs: list[tuple[int, ...]]
     ) -> _MockUinputDevice:
         return _MockUinputDevice(name, specs)
 
