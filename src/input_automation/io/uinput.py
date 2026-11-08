@@ -117,6 +117,10 @@ class UinputOutputProvider:
             name = str(block.input("DEVICE").value or "")
             event = _resolve_event(str(block.input("CODE").value or ""))
             if not name or event is None:
+                logger.debug(
+                    "OUTPUT block %s: DEVICE/CODE not configured, skipping",
+                    block_id,
+                )
                 continue
             needed.setdefault(name, []).append((block, event[0], event[1]))
 
@@ -136,10 +140,24 @@ class UinputOutputProvider:
                         logger.debug("cannot open uinput device %s: %s", name, exc)
                     continue
                 self._devices[name] = device
+                logger.debug(
+                    "uinput device %s opened with %d capabilities",
+                    name,
+                    len(codes_by_type),
+                )
             for block, etype, code in entries:
                 q = block.input("Q").value
                 raw = block.input("VALUE").value
                 new_value = self._emit_value(etype, q, raw)
+                logger.debug(
+                    "uinput %s [%s]: Q=%s -> event %s/%s value=%d",
+                    name,
+                    block.id,
+                    q,
+                    etype,
+                    code,
+                    new_value,
+                )
                 key = (name, code)
                 if self._last.get(key) == new_value:
                     continue

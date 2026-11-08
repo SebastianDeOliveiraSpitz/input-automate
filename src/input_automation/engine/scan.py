@@ -16,11 +16,14 @@ evdev/uinput providers in the IO layer).
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from time import monotonic
 
 from input_automation.engine.wires import WireGraph
+
+logger = logging.getLogger(__name__)
 
 InputReader = Callable[[WireGraph], None]
 OutputWriter = Callable[[WireGraph], None]
@@ -46,6 +49,7 @@ class ScanExecutor:
             raise ValueError(f"cycle_time_s must be > 0, got {cycle_time_s!r}")
         self._graph = graph
         self._cycle_time_s = float(cycle_time_s)
+        self._cycle_count = 0
         self._read_inputs = read_inputs or (lambda _graph: None)
         self._write_outputs = write_outputs or (lambda _graph: None)
 
@@ -69,12 +73,21 @@ class ScanExecutor:
         """
         started = monotonic()
         self._read_inputs(self._graph)
-        for block_id in self._graph.topological_order():
+        order = self._graph.topological_order()
+        for block_id in order:
             block = self._graph.block(block_id)
             block.evaluate()
             self._propagate_outputs(block_id)
         self._write_outputs(self._graph)
-        return monotonic() - started
+        self._cycle_count += 1
+        duration = monotonic() - started
+        logger.debug(
+            "scan cycle %d: %d blocks evaluated, outputs written in %.4fs",
+            self._cycle_count,
+            len(order),
+            duration,
+        )
+        return duration
 
     def _propagate_outputs(self, src_block: str) -> None:
         """Copy ``src_block``'s output pin values to the input pins wired to them.

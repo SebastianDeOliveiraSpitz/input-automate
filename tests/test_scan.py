@@ -3,6 +3,7 @@ at a fixed cycle time, deterministic."""
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import pytest
@@ -205,3 +206,15 @@ def test_inputs_keep_last_value_between_cycles() -> None:
     assert _block(graph, "p1").output("OUT").value == 7
     executor.run_once()
     assert _block(graph, "p1").output("OUT").value == 7
+
+
+def test_run_once_logs_each_cycle(caplog) -> None:
+    graph = WireGraph()
+    graph.add_block(_Pass("p1"))
+    executor = ScanExecutor(graph)
+    with caplog.at_level(logging.DEBUG, logger="input_automation.engine.scan"):
+        executor.run_once()
+        executor.run_once()
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("scan cycle 1:" in m for m in messages)
+    assert any("scan cycle 2:" in m for m in messages)

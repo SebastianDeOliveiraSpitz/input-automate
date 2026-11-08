@@ -6,6 +6,8 @@ no /dev/uinput access required (T8).
 
 from __future__ import annotations
 
+import logging
+
 from evdev import ecodes
 
 from input_automation.engine import (
@@ -229,6 +231,34 @@ def test_provider_no_output_blocks() -> None:
         open_device_fn=lambda name, specs: _FakeUinputDevice(name, [])
     )
     _run_once(provider)  # empty graph must not raise
+
+
+def test_provider_skips_unconfigured_output_blocks(caplog) -> None:
+    device = _FakeUinputDevice("out-keyboard", [])
+    provider = UinputOutputProvider(open_device_fn=lambda name, specs: device)
+    block = OutputBlock("out1")  # DEVICE/CODE default to ""
+    block.input("Q").set(True)
+    with caplog.at_level(logging.DEBUG, logger="input_automation.io.uinput"):
+        _run_once(provider, block)
+    assert device.events == []
+    assert any(
+        "DEVICE/CODE not configured, skipping" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_provider_logs_each_written_value(caplog) -> None:
+    device = _FakeUinputDevice("out-keyboard", [])
+    provider = UinputOutputProvider(open_device_fn=lambda name, specs: device)
+    block = _output_block("out-keyboard", "KEY_Q")
+    with caplog.at_level(logging.DEBUG, logger="input_automation.io.uinput"):
+        block.input("Q").set(True)
+        _run_once(provider, block)
+        block.input("Q").set(False)
+        _run_once(provider, block)
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("value=1" in m for m in messages)
+    assert any("value=0" in m for m in messages)
 
 
 def test_provider_devices_are_cached_and_closed() -> None:
