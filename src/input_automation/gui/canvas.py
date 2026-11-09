@@ -1153,6 +1153,11 @@ class PropertiesPanel(QWidget):
     def _build_record_row(self) -> None:
         assert self._block is not None
         button = QPushButton("Record key/button…")
+        button.setToolTip(
+            "Record a key press or button click from the selected input "
+            "device and write its evdev code name (e.g. KEY_Q, BTN_LEFT) "
+            "into the CODE field"
+        )
         status = QLabel("")
         status.setStyleSheet("color: #6b7280; font-size: 11px;")
         self._record_button = button
@@ -1208,6 +1213,7 @@ class PropertiesPanel(QWidget):
         if dtype is PinDType.BOOL:
             checkbox = QCheckBox()
             checkbox.setChecked(bool(value))
+            checkbox.setToolTip(f"Set the boolean value of input pin {name}")
             checkbox.toggled.connect(partial(self._set_value, name))
             return checkbox
         if dtype is PinDType.INT:
@@ -1274,14 +1280,21 @@ class CanvasWindow(QMainWindow):
 
         bar = self.addToolBar("canvas")
         self._new_act = QAction("New", self)
+        self._new_act.setToolTip("Create a new empty project")
         self._new_act.triggered.connect(self._new)
         self._open_act = QAction("Open…", self)
+        self._open_act.setToolTip("Open a project file (.yaml or .json)")
         self._open_act.triggered.connect(self._open)
         self._save_act = QAction("Save", self)
+        self._save_act.setToolTip("Save the current project")
         self._save_act.triggered.connect(self._save)
         validate_act = QAction("Validate graph", self)
+        validate_act.setToolTip("Check the wiring graph: blocks, pins, pin types and cycles")
         validate_act.triggered.connect(self._validate)
         self._run_action = QAction("Run", self)
+        self._run_action.setToolTip(
+            "Start/stop the cyclic scan engine: read inputs, evaluate blocks, write outputs"
+        )
         self._run_action.setCheckable(True)
         self._run_action.triggered.connect(self._toggle_run)
         bar.addAction(self._new_act)
@@ -1383,12 +1396,14 @@ class CanvasWindow(QMainWindow):
         file_menu.addAction(self._open_act)
         file_menu.addAction(self._save_act)
         save_as_act = QAction("Save As…", self)
+        save_as_act.setToolTip("Save the project under a new name")
         save_as_act.triggered.connect(self._save_as)
         file_menu.addAction(save_as_act)
         file_menu.addSeparator()
         self._recent_menu: QMenu = file_menu.addMenu("Open Recent")
         file_menu.addSeparator()
         exit_act = QAction("Exit", self)
+        exit_act.setToolTip("Close the application")
         exit_act.triggered.connect(self.close)
         file_menu.addAction(exit_act)
         file_menu.aboutToShow.connect(self._refresh_recent_menu)
@@ -1396,6 +1411,7 @@ class CanvasWindow(QMainWindow):
 
         view_menu = self.menuBar().addMenu("&View")
         self._view_properties_act = QAction("Properties", self, checkable=True)
+        self._view_properties_act.setToolTip("Show or hide the properties panel")
         self._view_properties_act.setChecked(self._properties_dock.isVisible())
         self._view_properties_act.toggled.connect(self._properties_dock.setVisible)
         self._properties_dock.visibilityChanged.connect(
@@ -1404,6 +1420,7 @@ class CanvasWindow(QMainWindow):
         view_menu.addAction(self._view_properties_act)
 
         self._view_palette_act = QAction("Palette", self, checkable=True)
+        self._view_palette_act.setToolTip("Show or hide the block palette")
         self._view_palette_act.setChecked(self._palette_dock.isVisible())
         self._view_palette_act.toggled.connect(self._palette_dock.setVisible)
         self._palette_dock.visibilityChanged.connect(

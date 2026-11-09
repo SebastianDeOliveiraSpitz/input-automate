@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPointF, QSettings, Qt, Signal
 from PySide6.QtGui import QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QComboBox, QFileDialog, QPushButton
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFileDialog, QPushButton
 
 import input_automation.gui.canvas as canvas_module
 from input_automation.devices.discovery import DeviceInfo
@@ -663,6 +663,43 @@ class TestPropertiesPanel:
         panel.set_block(canvas.selected_block())
         assert panel._editors == {}
 
+    def test_record_button_has_tooltip(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_block(canvas.add_block("INPUT", "i"))
+        assert panel._record_button is not None
+        assert panel._record_button.toolTip()
+
+    def test_bool_checkbox_has_tooltip(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+
+        panel.set_block(canvas.add_block("OUTPUT", "o"))
+        editor = panel._editors["Q"][0]
+        assert isinstance(editor, QCheckBox)
+        assert editor.toolTip()
+
+    def test_refresh_buttons_have_tooltips(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+
+        for type_name in ("INPUT", "OUTPUT"):
+            panel.set_block(canvas.add_block(type_name, type_name.lower()))
+            assert panel._device_combo is not None
+            refresh = next(
+                button
+                for button in panel.findChildren(QPushButton)
+                if button.text() == "Refresh"
+            )
+            assert refresh.toolTip()
+
 
 class TestRunStop:
     def test_run_toggle_starts_and_stops_scan(self, qtbot) -> None:
@@ -689,6 +726,20 @@ class TestRunStop:
         assert not win._run_action.isChecked()
         assert win._executor is None
         assert win._timer is None
+
+    def test_toolbar_actions_have_tooltips(self, qtbot) -> None:
+        win = CanvasWindow()
+        qtbot.addWidget(win)
+        for action in (
+            win._new_act,
+            win._open_act,
+            win._save_act,
+            win._run_action,
+            win._view_properties_act,
+            win._view_palette_act,
+        ):
+            assert action is not None
+            assert action.toolTip()
 
     def test_run_refuses_cyclic_graph(self, qtbot) -> None:
         win = CanvasWindow()
