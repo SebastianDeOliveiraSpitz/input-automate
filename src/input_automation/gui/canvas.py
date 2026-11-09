@@ -1408,6 +1408,7 @@ class CanvasWindow(QMainWindow):
         bar.addAction(self._run_action)
         self._build_menu_bar()
         self._canvas.graphChanged.connect(self._mark_dirty)
+        self._canvas.graphChanged.connect(self._on_graph_edited)
         self._update_title()
         self.statusBar().showMessage(
             "Drag blocks from the palette; click an output pin, then an input pin to wire."
@@ -1490,6 +1491,32 @@ class CanvasWindow(QMainWindow):
         self._run_action.setChecked(False)
         self._run_action.setText("Run")
         self.statusBar().showMessage("stopped")
+
+    # -- edit-while-running guard ----------------------------------------
+
+    def _on_graph_edited(self) -> None:
+        """Auto-stop the engine when the graph is edited while running (issue #15).
+
+        Edits made while the scan engine runs are silently ignored: the
+        executor keeps cycling the configuration captured at start time, so
+        the GUI would keep showing stale pin values and block states.
+        Stopping the engine forces the user to click Apply/Run again so the
+        new configuration is loaded fresh, and a clear pending-edits
+        indication is shown.
+        """
+        if self._timer is None:
+            return
+        self._stop_run()
+        self._run_action.setText("Apply")
+        self._run_action.setToolTip(
+            "The graph was edited while running. Click Apply to restart the "
+            "engine with the current configuration."
+        )
+        self.statusBar().showMessage(
+            "Engine stopped: graph edited while running — click Apply to "
+            "restart with the new configuration.",
+            0,
+        )
 
     # -- project save / open ---------------------------------------------
 

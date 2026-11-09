@@ -898,6 +898,64 @@ class TestRunStop:
         assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
         assert "stopped" in win.statusBar().currentMessage().lower()
 
+    def test_edit_while_running_auto_stops_engine(self, qtbot, monkeypatch) -> None:
+        """Editing while running stops the engine and shows a pending-edits cue (issue #15).
+
+        Option A (auto-stop): the user must click Apply to restart with the
+        new configuration, so the GUI never shows stale logical states.
+        """
+        win = CanvasWindow()
+        qtbot.addWidget(win)
+        canvas = win._canvas
+        canvas.add_block("AND", "a")
+
+        class _FakeProvider:
+            def __call__(self, graph: WireGraph) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        for name in (
+            "EvdevInputProvider",
+            "CaptureInputProvider",
+            "UinputOutputProvider",
+        ):
+            monkeypatch.setattr(canvas_module, name, lambda: _FakeProvider())
+
+        win._run_action.trigger()
+        assert win._executor is not None
+        assert win._timer is not None
+        assert win._run_action.text() == "Stop"
+
+        # edit while running: add a block -> engine must auto-stop
+        canvas.add_block("AND", "b")
+
+        assert win._executor is None
+        assert win._timer is None
+        assert not win._run_action.isChecked()
+        assert win._run_action.text() == "Apply"
+        msg = win.statusBar().currentMessage().lower()
+        assert "stopped" in msg
+        assert "edited while running" in msg
+        assert "apply" in msg
+
+        # the pending edit is reflected in the tooltip too
+        assert "edited while running" in win._run_action.toolTip().lower()
+
+        # click Apply -> engine restarts with the new configuration
+        win._run_action.trigger()
+        assert win._executor is not None
+        assert win._timer is not None
+        assert win._run_action.text() == "Stop"
+        block_ids = win._executor.graph.blocks()
+        assert "a" in block_ids and "b" in block_ids
+
+        # stop again to leave a clean state
+        win._run_action.trigger()
+        assert win._executor is None
+        assert win._timer is None
+
 
 class TestWindowPlacement:
     def test_window_remembers_geometry_and_dock_state(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
