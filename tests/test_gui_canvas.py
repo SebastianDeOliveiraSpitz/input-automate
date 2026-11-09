@@ -5,10 +5,33 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPointF, QSettings, Qt, Signal
-from PySide6.QtGui import QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeyEvent, QMouseEvent
+from PySide6.QtCore import (
+    QByteArray,
+    QEvent,
+    QMimeData,
+    QObject,
+    QPointF,
+    QSettings,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import (
+    QCloseEvent,
+    QDrag,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QKeyEvent,
+    QMouseEvent,
+)
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QCheckBox, QComboBox, QFileDialog, QPushButton
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QPushButton,
+    QScrollArea,
+)
 
 import input_automation.gui.canvas as canvas_module
 from input_automation.devices.discovery import DeviceInfo
@@ -745,6 +768,13 @@ class TestPropertiesPanel:
             assert panel._device_combo is not None
             assert panel._device_combo.toolTip()
 
+    def test_panel_is_scrollable(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        # The panel lives in a scroll area: it never stretches the dock
+        # beyond its content and fits in limited vertical space (issue #14).
+        assert panel.findChild(QScrollArea) is not None
+
 
 class TestRunStop:
     def test_run_toggle_starts_and_stops_scan(self, qtbot) -> None:
@@ -867,6 +897,30 @@ class TestRunStop:
         assert win._executor is None
         assert aand.pin_value(PinDirection.OUTPUT, "Q") is False
         assert "stopped" in win.statusBar().currentMessage().lower()
+
+
+class TestWindowPlacement:
+    def test_window_remembers_geometry_and_dock_state(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        settings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+        win = CanvasWindow(settings=settings)
+        qtbot.addWidget(win)
+        win.resize(900, 500)
+        win.show()
+        win._view_properties_act.toggle()  # hide the properties dock
+        win.closeEvent(QCloseEvent())
+
+        assert settings.value("main/geometry") is not None
+        assert settings.value("main/windowState") is not None
+
+        restored = CanvasWindow(settings=settings)
+        qtbot.addWidget(restored)
+        restored.show()
+        # Dock layout may resize the window around its content, so only assert
+        # a sane restored size (not collapsed to a default) plus visibility.
+        assert restored.size().width() >= 400
+        assert restored.size().height() >= 300
+        assert not restored._properties_dock.isVisible()
+        assert not restored._view_properties_act.isChecked()
 
 
 class TestProjectSaveOpen:

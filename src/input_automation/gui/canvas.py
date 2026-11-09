@@ -35,6 +35,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QAction,
+    QCloseEvent,
     QColor,
     QDragEnterEvent,
     QDragMoveEvent,
@@ -53,6 +54,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGraphicsItem,
     QGraphicsLineItem,
     QGraphicsRectItem,
@@ -67,6 +69,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStyle,
     QStyleOptionGraphicsItem,
@@ -1059,11 +1062,24 @@ class PropertiesPanel(QWidget):
         self._fail_slot: Callable[[str], None] | None = None
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
         self._title = QLabel("No block selected")
         self._form = QFormLayout()
-        layout.addWidget(self._title)
-        layout.addLayout(self._form)
-        layout.addStretch(1)
+
+        # Scrollable container: the panel never stretches the dock beyond its
+        # content and fits in limited vertical space (issue #14).
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(6, 6, 6, 6)
+        container_layout.addWidget(self._title)
+        container_layout.addLayout(self._form)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidget(container)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        layout.addWidget(self._scroll)
 
     def set_block(self, block: BlockItem | None) -> None:
         self._recorder.stop()
@@ -1341,6 +1357,7 @@ class CanvasWindow(QMainWindow):
         palette = BlockPalette()
         self._canvas.set_palette(palette)
         self._palette_dock = QDockWidget("Palette", self)
+        self._palette_dock.setObjectName("palette_dock")
         self._palette_dock.setWidget(palette)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._palette_dock)
 
@@ -1350,8 +1367,19 @@ class CanvasWindow(QMainWindow):
         )
         self._properties.parametersChanged.connect(self._canvas.graphChanged)
         self._properties_dock = QDockWidget("Properties", self)
+        self._properties_dock.setObjectName("properties_dock")
         self._properties_dock.setWidget(self._properties)
+        self._properties_dock.setMinimumWidth(240)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._properties_dock)
+
+        # Remember the panel's last size, position and visibility so it stops
+        # dominating the canvas on every start (issue #14).
+        geometry = self._settings.value("main/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        window_state = self._settings.value("main/windowState")
+        if window_state is not None:
+            self.restoreState(window_state)
 
         bar = self.addToolBar("canvas")
         self._new_act = QAction("New", self)
@@ -1599,6 +1627,13 @@ class CanvasWindow(QMainWindow):
         if self._dirty:
             title += " •"
         self.setWindowTitle(title)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Persist window geometry and dock layout (issue #14) so the
+        properties panel remembers its last size, position and visibility."""
+        self._settings.setValue("main/geometry", self.saveGeometry())
+        self._settings.setValue("main/windowState", self.saveState())
+        super().closeEvent(event)
 
 
 def run() -> None:
