@@ -233,6 +233,44 @@ class RecentProjects:
         self._settings.setValue("recent/projects", paths)
 
 
+# Human-readable descriptions used for tooltips on palette items and block
+# items. Keys match the engine registry type names.
+BLOCK_DESCRIPTIONS: dict[str, str] = {
+    "AND": "Output Q is true when both inputs IN1 and IN2 are true.",
+    "OR": "Output Q is true when at least one input IN1/IN2 is true.",
+    "XOR": "Output Q is true when exactly one input is true.",
+    "NOT": "Output Q is the inverse of input IN.",
+    "SR": "SET/RESET flip-flop: S sets Q, R resets Q (reset priority).",
+    "TON": "On-delay timer: Q turns true once elapsed >= PT while IN stays true.",
+    "CTU": "Up counter: CV increments on CU rising edges; Q true while CV >= PV.",
+    "EQ": "Output Q true when IN1 == IN2 (numeric comparison).",
+    "NE": "Output Q true when IN1 != IN2 (numeric comparison).",
+    "LT": "Output Q true when IN1 < IN2 (numeric comparison).",
+    "GT": "Output Q true when IN1 > IN2 (numeric comparison).",
+    "THRESHOLD": "Output Q true when IN >= LIMIT (threshold crossed).",
+    "PASS": "Pass-through buffer: output Q follows input IN unchanged.",
+    "MUX": "2:1 multiplexer: Q = IN2 while SEL is true, otherwise IN1.",
+    "INPUT": "Reads an evdev device: Q true when CODE is pressed; VALUE holds the code.",
+    "OUTPUT": "Writes to a uinput device: presses CODE when Q is true.",
+    "CAPTURE": "Screen region analysis: VALUE/Q reflect pixels matching COLOR within TOLERANCE.",
+}
+
+# Short descriptions for the configurable (defaulted) input pins shown in the
+# properties panel. Unknown pins fall back to a generic message.
+PIN_DESCRIPTIONS: dict[str, str] = {
+    "PT": "Preset time in seconds (on-delay timer).",
+    "DT": "Seconds since the last scan cycle.",
+    "PV": "Preset value (target count).",
+    "TOLERANCE": "Per-channel color tolerance, 0..255.",
+    "LIMIT": "Threshold limit value.",
+    "CODE": "evdev code name, e.g. KEY_Q or BTN_LEFT.",
+    "REGION": "Screen region to capture, e.g. '0,0,1920,1080'.",
+    "MODE": "Capture mode: 'color' or 'threshold'.",
+    "COLOR": "Target BGR color 'b,g,r' (color mode).",
+    "VALUE": "Value written to / read from the device (INT).",
+}
+
+
 class _CanvasScene(QGraphicsScene):
     """Scene that keeps wire geometry in sync while blocks are moved.
 
@@ -283,6 +321,7 @@ class BlockItem(QGraphicsRectItem):
             | QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
         )
         self._relayout()
+        self.setToolTip(self._block_tooltip())
 
     # -- geometry ---------------------------------------------------------
 
@@ -339,6 +378,7 @@ class BlockItem(QGraphicsRectItem):
     ) -> None:
         """Store live pin values (from the scan engine) and repaint."""
         self._pin_values = dict(values)
+        self.setToolTip(self._block_tooltip())
         self.update()
 
     def pin_value(
@@ -408,6 +448,29 @@ class BlockItem(QGraphicsRectItem):
             return pin_name
         return f"{pin_name} {_format_pin_value(value)}"
 
+    def _block_tooltip(self) -> str:
+        """Tooltip text: block identity, pins with dtypes, and live values.
+
+        Pins are painted inside the block item rather than being separate
+        items, so the pin name / dtype / direction and the current live value
+        are reported here instead of as per-pin hover tips.
+        """
+        lines = [f"{self.type_name} · {self.block_id}"]
+        if self.input_pins:
+            parts = [f"{pin.name} ({pin.dtype.value})" for pin in self.input_pins]
+            lines.append("inputs: " + ", ".join(parts))
+        if self.output_pins:
+            parts = [f"{pin.name} ({pin.dtype.value})" for pin in self.output_pins]
+            lines.append("outputs: " + ", ".join(parts))
+        live = []
+        for (direction, name) in sorted(self._pin_values):
+            value = self._pin_values[(direction, name)]
+            if value is not None:
+                live.append(f"{name}={_format_pin_value(value)}")
+        if live:
+            lines.append("values: " + ", ".join(live))
+        return "\n".join(lines)
+
     def itemChange(
         self, change: QGraphicsItem.GraphicsItemChange, value: Any
     ) -> Any:
@@ -435,6 +498,7 @@ class WireItem(QGraphicsLineItem):
         self.dst_block = dst_block
         self.dst_pin = dst_pin
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setToolTip(f"{src_block}.{src_pin} → {dst_block}.{dst_pin}")
         self._refresh_pen()
 
     def _refresh_pen(self) -> None:
@@ -949,6 +1013,7 @@ class BlockPalette(QListWidget):
         for type_name in default_registry.names():
             item = QListWidgetItem(type_name)
             item.setData(Qt.ItemDataRole.UserRole, type_name)
+            item.setToolTip(BLOCK_DESCRIPTIONS.get(type_name, f"{type_name} function block."))
             self.addItem(item)
 
     def mimeTypes(self) -> list[str]:
@@ -1077,9 +1142,15 @@ class PropertiesPanel(QWidget):
         combo.setEditable(True)
         if is_output:
             self._populate_output_devices(combo)
+            combo.setToolTip(
+                "Virtual output device name (created lazily by the OUTPUT block)."
+            )
             refresh_tooltip = "Virtual output devices are created by name; nothing to rescan"
         else:
             self._populate_devices(combo)
+            combo.setToolTip(
+                "evdev input device to read (e.g. /dev/input/event0)."
+            )
             refresh_tooltip = "Re-scan /dev/input for available devices"
 
         def device_changed(index: int) -> None:
@@ -1216,19 +1287,23 @@ class PropertiesPanel(QWidget):
             checkbox.setToolTip(f"Set the boolean value of input pin {name}")
             checkbox.toggled.connect(partial(self._set_value, name))
             return checkbox
+        description = PIN_DESCRIPTIONS.get(name, f"Input pin {name} ({dtype.value}).")
         if dtype is PinDType.INT:
             spinbox = QSpinBox()
             spinbox.setRange(-2_147_483_648, 2_147_483_647)
             spinbox.setValue(int(value if isinstance(value, int) else 0))
+            spinbox.setToolTip(f"{name} (int) — {description}")
             spinbox.valueChanged.connect(partial(self._set_value, name))
             return spinbox
         if dtype is PinDType.FLOAT:
             float_spin = QDoubleSpinBox()
             float_spin.setRange(-1e9, 1e9)
             float_spin.setValue(float(value if isinstance(value, (int, float)) else 0.0))
+            float_spin.setToolTip(f"{name} (float) — {description}")
             float_spin.valueChanged.connect(partial(self._set_value, name))
             return float_spin
         line_edit = QLineEdit(str(value if value is not None else ""))
+        line_edit.setToolTip(f"{name} (string) — {description}")
         line_edit.textChanged.connect(partial(self._set_value, name))
         return line_edit
 

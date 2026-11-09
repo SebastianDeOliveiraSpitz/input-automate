@@ -700,6 +700,51 @@ class TestPropertiesPanel:
             )
             assert refresh.toolTip()
 
+    def test_palette_items_have_tooltips(self, qtbot) -> None:
+        palette = BlockPalette()
+        qtbot.addWidget(palette)
+        for index in range(palette.count()):
+            item = palette.item(index)
+            assert item is not None
+            assert item.toolTip()
+
+    def test_block_item_has_tooltip(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        item = canvas.add_block("TON", "t")
+        assert item.toolTip()
+        assert "TON · t" in item.toolTip()
+        assert "PT (float)" in item.toolTip() and "DT (float)" in item.toolTip()
+
+    def test_wire_item_has_tooltip(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a")
+        canvas.add_block("TON", "t")
+        canvas.add_wire("a", "Q", "t", "IN")
+        wire = canvas._wires[("a", "Q", "t", "IN")]
+        assert wire.toolTip()
+        assert "a.Q → t.IN" in wire.toolTip()
+
+    def test_property_editors_have_tooltips(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        panel.set_block(canvas.add_block("TON", "t"))
+        for editor, _dtype in panel._editors.values():
+            assert editor.toolTip()
+
+    def test_device_combo_has_tooltip(self, qtbot) -> None:
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        panel = PropertiesPanel()
+        qtbot.addWidget(panel)
+        for type_name in ("INPUT", "OUTPUT"):
+            panel.set_block(canvas.add_block(type_name, type_name.lower()))
+            assert panel._device_combo is not None
+            assert panel._device_combo.toolTip()
+
 
 class TestRunStop:
     def test_run_toggle_starts_and_stops_scan(self, qtbot) -> None:
