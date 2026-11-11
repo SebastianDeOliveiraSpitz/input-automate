@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from functools import partial
 from itertools import chain
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import (
     QByteArray,
@@ -42,6 +42,7 @@ from PySide6.QtGui import (
     QDropEvent,
     QFont,
     QPainter,
+    QPalette,
     QPen,
 )
 from PySide6.QtWidgets import (
@@ -127,6 +128,51 @@ RUN_CYCLE_MS = 50  # scan cycle period while the canvas is running (20 Hz)
 GUI_CONFIG_DIR = Path.home() / ".config" / "input-automate"
 SETTINGS_FILE = GUI_CONFIG_DIR / "gui.ini"
 PROJECT_FILE_FILTER = "Project files (*.yaml *.yml *.json)"
+
+# -- theming (issue #17: dark mode + Adwaita design) ------------------------
+# The GUI runs on GNOME Wayland, so the Adwaita style is the native look.
+# Dark mode is an explicit, persisted QPalette override so it works regardless
+# of the GTK theme variant in force.
+THEME_SETTING_KEY = "gui/theme"
+_THEME_STYLE = "adwaita"
+_THEME_FALLBACK_STYLE = "Fusion"
+
+# Dark palette tuned to Adwaita's dark look (surface/base/text/highlight).
+_DARK_PALETTE: dict[QPalette.ColorRole, QColor] = {
+    QPalette.ColorRole.Window: QColor(46, 46, 46),
+    QPalette.ColorRole.WindowText: QColor(238, 238, 238),
+    QPalette.ColorRole.Base: QColor(35, 35, 35),
+    QPalette.ColorRole.AlternateBase: QColor(46, 46, 46),
+    QPalette.ColorRole.Text: QColor(238, 238, 238),
+    QPalette.ColorRole.Button: QColor(56, 56, 56),
+    QPalette.ColorRole.ButtonText: QColor(238, 238, 238),
+    QPalette.ColorRole.Highlight: QColor(52, 101, 164),
+    QPalette.ColorRole.HighlightedText: QColor(255, 255, 255),
+    QPalette.ColorRole.ToolTipBase: QColor(46, 46, 46),
+    QPalette.ColorRole.ToolTipText: QColor(238, 238, 238),
+    QPalette.ColorRole.PlaceholderText: QColor(160, 160, 160),
+}
+
+
+def apply_theme(app: QApplication, settings: QSettings) -> str:
+    """Apply the Adwaita style and the light/dark palette from *settings*.
+
+    Returns the active theme name (``"dark"`` or ``"light"``). The Adwaita
+    style is requested first and silently falls back to Fusion when the
+    Adwaita style plugin is unavailable (e.g. headless/offscreen test runs).
+    """
+    if not app.setStyle(_THEME_STYLE):  # pragma: no cover - style plugin env
+        app.setStyle(_THEME_FALLBACK_STYLE)
+    theme = str(settings.value(THEME_SETTING_KEY, "light"))
+    if theme == "dark":
+        palette = app.palette()
+        for role, color in _DARK_PALETTE.items():
+            palette.setColor(role, color)
+        app.setPalette(palette)
+    else:
+        app.setPalette(app.style().standardPalette())
+    return theme
+
 
 BLOCK_WIDTH = 160
 TITLE_HEIGHT = 26
@@ -1399,6 +1445,12 @@ class CanvasWindow(QMainWindow):
         self._settings = settings or QSettings(
             str(SETTINGS_FILE), QSettings.Format.IniFormat
         )
+        app = QApplication.instance()
+        self._theme = (
+            apply_theme(cast(QApplication, app), self._settings)
+            if app is not None
+            else "light"
+        )
         self._recent = RecentProjects(self._settings)
         self.setCentralWidget(self._canvas)
 
@@ -1605,6 +1657,24 @@ class CanvasWindow(QMainWindow):
             self._view_palette_act.setChecked
         )
         view_menu.addAction(self._view_palette_act)
+
+        self._view_dark_act = QAction("Dark mode", self, checkable=True)
+        self._view_dark_act.setToolTip(
+            "Switch the canvas between the light and dark Adwaita theme"
+        )
+        self._view_dark_act.setChecked(self._theme == "dark")
+        self._view_dark_act.toggled.connect(self._toggle_dark_mode)
+        view_menu.addAction(self._view_dark_act)
+
+    def _toggle_dark_mode(self, checked: bool) -> None:
+        """Persist the dark-mode choice and re-apply the theme live."""
+        app = QApplication.instance()
+        if app is None:
+            return
+        self._settings.setValue(
+            THEME_SETTING_KEY, "dark" if checked else "light"
+        )
+        self._theme = apply_theme(cast(QApplication, app), self._settings)
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()

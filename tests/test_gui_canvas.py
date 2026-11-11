@@ -23,9 +23,11 @@ from PySide6.QtGui import (
     QDropEvent,
     QKeyEvent,
     QMouseEvent,
+    QPalette,
 )
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -77,6 +79,39 @@ class TestBlockPalette:
         assert matches
         palette.setCurrentItem(matches[0])
         assert palette.selected_block_type() == "AND"
+
+
+class TestTheme:
+    def test_apply_theme_dark_sets_dark_palette(self, qtbot, tmp_path) -> None:
+        app = QApplication.instance()
+        assert app is not None
+        settings = QSettings(
+            str(tmp_path / "gui.ini"), QSettings.Format.IniFormat
+        )
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "dark")
+        theme = canvas_module.apply_theme(app, settings)
+        assert theme == "dark"
+        palette = app.palette()
+        assert (
+            palette.color(QPalette.ColorRole.Window)
+            == canvas_module._DARK_PALETTE[QPalette.ColorRole.Window]
+        )
+        assert (
+            palette.color(QPalette.ColorRole.Base)
+            == canvas_module._DARK_PALETTE[QPalette.ColorRole.Base]
+        )
+
+    def test_apply_theme_light_resets_palette(self, qtbot, tmp_path) -> None:
+        app = QApplication.instance()
+        assert app is not None
+        settings = QSettings(
+            str(tmp_path / "gui.ini"), QSettings.Format.IniFormat
+        )
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "dark")
+        canvas_module.apply_theme(app, settings)
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "light")
+        theme = canvas_module.apply_theme(app, settings)
+        assert theme == "light"
 
 
 class TestBlockCanvas:
