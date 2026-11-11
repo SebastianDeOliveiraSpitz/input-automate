@@ -29,6 +29,7 @@ from PySide6.QtCore import (
     QPointF,
     QRectF,
     QSettings,
+    QSize,
     Qt,
     QTimer,
     Signal,
@@ -1063,11 +1064,23 @@ class BlockPalette(QListWidget):
     # not listed here are appended alphabetically at the end.
     CATEGORY_ORDER: list[str] = ["Input", "Output", "Logic", "Timer"]
 
+    # Accent color per category header. Chosen to contrast with white header
+    # text in both light and dark themes.
+    _CATEGORY_COLORS: dict[str, QColor] = {
+        "Input": QColor(25, 118, 210),     # blue
+        "Output": QColor(56, 142, 60),     # green
+        "Logic": QColor(123, 31, 162),     # purple
+        "Timer": QColor(230, 81, 0),       # orange
+    }
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setSortingEnabled(False)  # we order by category, then by name
+        self.setStyleSheet(
+            "QListWidget::item { padding-left: 12px; border: none; }"
+        )
         self._populate()
 
     # -- population -------------------------------------------------------
@@ -1089,14 +1102,14 @@ class BlockPalette(QListWidget):
             if names:
                 self._add_category_header(category)
                 for type_name in names:
-                    self._add_block_item(type_name)
+                    self._add_block_item(type_name, category)
         # Any leftover categories (none expected) appended last, alphabetically.
         for category in sorted(by_category):
             names = by_category[category]
             if names:
                 self._add_category_header(category)
                 for type_name in names:
-                    self._add_block_item(type_name)
+                    self._add_block_item(type_name, category)
 
     def _add_category_header(self, category: str) -> None:
         item = QListWidgetItem(category)
@@ -1104,13 +1117,23 @@ class BlockPalette(QListWidget):
         font = item.font()
         font.setBold(True)
         item.setFont(font)
+        color = self._CATEGORY_COLORS.get(category, QColor(96, 96, 96))
+        item.setBackground(color)
+        item.setForeground(QColor(255, 255, 255))
+        item.setSizeHint(QSize(0, 26))
         item.setToolTip(f"{category} function blocks")
         self.addItem(item)
 
-    def _add_block_item(self, type_name: str) -> None:
+    def _add_block_item(self, type_name: str, category: str) -> None:
         item = QListWidgetItem(type_name)
         item.setData(Qt.ItemDataRole.UserRole, type_name)
         item.setToolTip(BLOCK_DESCRIPTIONS.get(type_name, f"{type_name} function block."))
+        # Subtle category tint so blocks visually belong to their group.
+        color = self._CATEGORY_COLORS.get(category)
+        if color is not None:
+            tint = QColor(color)
+            tint.setAlpha(20)
+            item.setBackground(tint)
         self.addItem(item)
 
     def mimeTypes(self) -> list[str]:
