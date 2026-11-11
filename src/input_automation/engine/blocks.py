@@ -159,6 +159,7 @@ class TONBlock(Block):
     """
 
     type_name = "TON"
+    category = "Timer"
     input_pins = (
         Pin("IN", PinDirection.INPUT, PinDType.BOOL),
         Pin("PT", PinDirection.INPUT, PinDType.FLOAT, default=1.0),
@@ -205,6 +206,7 @@ class CTUBlock(Block):
     """
 
     type_name = "CTU"
+    category = "Timer"
     input_pins = (
         Pin("CU", PinDirection.INPUT, PinDType.BOOL),
         Pin("R", PinDirection.INPUT, PinDType.BOOL),

@@ -36,6 +36,7 @@ class InputBlock(Block):
     """
 
     type_name = "INPUT"
+    category = "Input"
     input_pins = (
         Pin("DEVICE", PinDirection.INPUT, PinDType.STRING, default=""),
         Pin("CODE", PinDirection.INPUT, PinDType.STRING, default=""),
@@ -71,6 +72,7 @@ class OutputBlock(Block):
     """
 
     type_name = "OUTPUT"
+    category = "Output"
     input_pins = (
         Pin("DEVICE", PinDirection.INPUT, PinDType.STRING, default=""),
         Pin("CODE", PinDirection.INPUT, PinDType.STRING, default=""),
@@ -107,6 +109,7 @@ class CaptureBlock(Block):
     """
 
     type_name = "CAPTURE"
+    category = "Input"
     input_pins = (
         Pin("REGION", PinDirection.INPUT, PinDType.STRING, default=""),
         Pin("MODE", PinDirection.INPUT, PinDType.STRING, default="color"),

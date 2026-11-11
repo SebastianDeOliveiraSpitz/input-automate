@@ -780,7 +780,7 @@ class BlockCanvas(QGraphicsView):
         if mime.hasFormat(BLOCK_MIME):
             data = mime.data(BLOCK_MIME)
             type_name = data.data().decode("utf-8") if not data.isEmpty() else ""
-            if type_name:
+            if type_name and default_registry.has(type_name):
                 self.add_block(type_name, pos=self.mapToScene(event.position().toPoint()))
             event.acceptProposedAction()
         else:
@@ -1006,18 +1006,66 @@ class _CanvasViewport(QWidget):
 
 
 class BlockPalette(QListWidget):
-    """Draggable list of the block types in the engine registry."""
+    """Draggable list of the block types in the engine registry.
+
+    Block types are grouped by category (Input, Output, Logic, Timer) with a
+    non-draggable, non-selectable header item per category; within a category
+    types are sorted alphabetically.
+    """
+
+    # Order of category headers in the palette (top to bottom). Categories
+    # not listed here are appended alphabetically at the end.
+    CATEGORY_ORDER: list[str] = ["Input", "Output", "Logic", "Timer"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setSortingEnabled(True)
+        self.setSortingEnabled(False)  # we order by category, then by name
+        self._populate()
+
+    # -- population -------------------------------------------------------
+
+    def _category(self, type_name: str) -> str:
+        try:
+            return getattr(default_registry.get(type_name), "category", "Logic")
+        except KeyError:
+            return "Logic"
+
+    def _populate(self) -> None:
+        by_category: dict[str, list[str]] = {}
         for type_name in default_registry.names():
-            item = QListWidgetItem(type_name)
-            item.setData(Qt.ItemDataRole.UserRole, type_name)
-            item.setToolTip(BLOCK_DESCRIPTIONS.get(type_name, f"{type_name} function block."))
-            self.addItem(item)
+            by_category.setdefault(self._category(type_name), []).append(type_name)
+        for names in by_category.values():
+            names.sort()
+        for category in self.CATEGORY_ORDER:
+            names = by_category.pop(category, [])
+            if names:
+                self._add_category_header(category)
+                for type_name in names:
+                    self._add_block_item(type_name)
+        # Any leftover categories (none expected) appended last, alphabetically.
+        for category in sorted(by_category):
+            names = by_category[category]
+            if names:
+                self._add_category_header(category)
+                for type_name in names:
+                    self._add_block_item(type_name)
+
+    def _add_category_header(self, category: str) -> None:
+        item = QListWidgetItem(category)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        item.setToolTip(f"{category} function blocks")
+        self.addItem(item)
+
+    def _add_block_item(self, type_name: str) -> None:
+        item = QListWidgetItem(type_name)
+        item.setData(Qt.ItemDataRole.UserRole, type_name)
+        item.setToolTip(BLOCK_DESCRIPTIONS.get(type_name, f"{type_name} function block."))
+        self.addItem(item)
 
     def mimeTypes(self) -> list[str]:
         return [BLOCK_MIME, "text/plain"]
@@ -1026,7 +1074,7 @@ class BlockPalette(QListWidget):
         mime = QMimeData()
         name = ""
         for item in items:
-            if isinstance(item, QListWidgetItem):
+            if isinstance(item, QListWidgetItem) and default_registry.has(item.text()):
                 name = item.text()
                 break
         if name:

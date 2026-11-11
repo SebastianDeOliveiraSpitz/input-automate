@@ -28,6 +28,7 @@ class Block(ABC):
     """
 
     type_name: ClassVar[str] = "BLOCK"
+    category: ClassVar[str] = "Logic"
     input_pins: ClassVar[tuple[Pin, ...]] = ()
     output_pins: ClassVar[tuple[Pin, ...]] = ()
 
