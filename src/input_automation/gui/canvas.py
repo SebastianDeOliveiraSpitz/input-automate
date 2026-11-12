@@ -294,7 +294,10 @@ BLOCK_DESCRIPTIONS: dict[str, str] = {
     "NOT": "Output Q is the inverse of input IN.",
     "SR": "SET/RESET flip-flop: S sets Q, R resets Q (reset priority).",
     "TON": "On-delay timer: Q turns true once elapsed >= PT while IN stays true.",
+    "TOF": "Off-delay timer: Q stays true while IN is true and for PT after IN goes false.",
+    "TP": "Pulse timer: Q true for PT after each IN rising edge.",
     "CTU": "Up counter: CV increments on CU rising edges; Q true while CV >= PV.",
+    "CLK": "Periodic clock: Q true for ON seconds every PERIOD cycle (DT-driven).",
     "EQ": "Output Q true when IN1 == IN2 (numeric comparison).",
     "NE": "Output Q true when IN1 != IN2 (numeric comparison).",
     "LT": "Output Q true when IN1 < IN2 (numeric comparison).",
@@ -310,9 +313,11 @@ BLOCK_DESCRIPTIONS: dict[str, str] = {
 # Short descriptions for the configurable (defaulted) input pins shown in the
 # properties panel. Unknown pins fall back to a generic message.
 PIN_DESCRIPTIONS: dict[str, str] = {
-    "PT": "Preset time in seconds (on-delay timer).",
+    "PT": "Preset time in seconds (on-delay / off-delay / pulse timer).",
     "DT": "Seconds since the last scan cycle.",
     "PV": "Preset value (target count).",
+    "ON": "Seconds Q is true within each clock cycle.",
+    "PERIOD": "Clock cycle time in seconds.",
     "TOLERANCE": "Per-channel color tolerance, 0..255.",
     "LIMIT": "Threshold limit value.",
     "CODE": "evdev code name, e.g. KEY_Q or BTN_LEFT.",

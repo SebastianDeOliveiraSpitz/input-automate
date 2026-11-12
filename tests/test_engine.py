@@ -166,3 +166,80 @@ def test_default_registry_contains_function_blocks() -> None:
     for name in names:
         block = default_registry.create(name, "t")
         assert isinstance(block, Block)
+
+
+def test_timer_blocks_have_timer_category() -> None:
+    # The GUI palette categorizes blocks via this attribute.
+    for name in ("TON", "TOF", "TP", "CTU", "CLK"):
+        block = default_registry.create(name, "t")
+        assert block.category == "Timer"
+
+
+def test_tof_holds_q_after_in_falls() -> None:
+    block = default_registry.create("TOF", "tof1")
+    block.input("PT").set(1.0)
+    block.input("DT").set(0.25)
+    block.input("IN").set(True)
+    block.evaluate()
+    assert block.output("Q").value is True
+    assert block.output("ET").value == 0.0
+    block.input("IN").set(False)
+    for _ in range(3):
+        block.evaluate()
+    # ET = 0.75 < PT -> Q still true
+    assert block.output("Q").value is True
+    assert block.output("ET").value == 0.75
+    block.evaluate()  # ET = 1.0 >= PT
+    assert block.output("Q").value is False
+    assert block.output("ET").value == 1.0
+    # IN true again resets the hold time
+    block.input("IN").set(True)
+    block.evaluate()
+    assert block.output("Q").value is True
+    assert block.output("ET").value == 0.0
+
+
+def test_tp_pulse_width_on_rising_edge() -> None:
+    block = default_registry.create("TP", "tp1")
+    block.input("PT").set(1.0)
+    block.input("DT").set(0.25)
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is False
+    block.input("IN").set(True)  # rising edge starts the pulse
+    block.evaluate()
+    assert block.output("Q").value is True
+    assert block.output("ET").value == 0.25
+    block.input("IN").set(False)  # IN low, pulse continues
+    block.evaluate()  # ET = 0.5
+    block.evaluate()  # ET = 0.75
+    assert block.output("Q").value is True
+    assert block.output("ET").value == 0.75
+    block.evaluate()  # ET = 1.0 >= PT -> pulse done
+    assert block.output("Q").value is False
+    assert block.output("ET").value == 1.0
+    # a second rising edge restarts the pulse
+    block.input("IN").set(True)
+    block.evaluate()
+    assert block.output("Q").value is True
+    assert block.output("ET").value == 0.25
+
+
+def test_clk_fires_true_each_cycle() -> None:
+    block = default_registry.create("CLK", "clk1")
+    block.input("PERIOD").set(1.0)
+    block.input("ON").set(0.5)
+    block.input("DT").set(0.25)
+    values = []
+    for _ in range(12):
+        block.evaluate()
+        values.append(block.output("Q").value)
+    # phase: 0.25, 0.5, 0.75, 0.0, ... -> Q true while phase < 0.5
+    assert values == [True, False, False, True] * 3
+    # tick 12 lands exactly on the period boundary -> phase wraps to 0.0
+    assert block.output("ET").value == 0.0
+    # IN false disables the clock and resets the phase
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is False
+    assert block.output("ET").value == 0.0

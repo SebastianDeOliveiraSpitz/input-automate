@@ -1,8 +1,8 @@
 """Basic function blocks for the cyclic scan engine (T4/T5).
 
 Combinational blocks: AND, OR, XOR, NOT, EQ, NE, LT, GT, THRESHOLD.
-Sequential blocks: SR (SET/RESET flip-flop), TON (on-delay timer), CTU (up
-counter).
+Sequential blocks: SR (SET/RESET flip-flop), TON (on-delay timer), TOF
+(off-delay timer), TP (pulse timer), CTU (up counter), CLK (periodic clock).
 Signal blocks: PASS (pass-through), MUX (2:1 multiplexer).
 
 All blocks are headless-testable: no GUI or IO dependencies, all configuration
@@ -20,8 +20,11 @@ from input_automation.project.pins import PinDirection, PinDType
 
 __all__ = [
     "ANDBlock",
+    "ClockBlock",
     "CTUBlock",
     "EQBlock",
+    "TOFBlock",
+    "TPBlock",
     "GTBlock",
     "LTBlock",
     "MUXBlock",
@@ -240,6 +243,179 @@ class CTUBlock(Block):
         self.output("CV").set(self._cv)
 
 
+class TOFBlock(Block):
+    """Off-delay timer.
+
+    Inputs:
+        IN -- enable (bool). Q stays true while IN is true.
+        PT -- preset time in seconds (float, default 1.0). After IN goes
+            false, Q stays true for PT seconds.
+        DT -- seconds since the last scan cycle (float, default 0.0). The
+            caller (e.g. a read_inputs provider) injects the cycle time here;
+            unwired, the timer never advances.
+    Outputs:
+        Q -- true while IN is true and for PT seconds after IN goes false.
+        ET -- elapsed time since IN last went false, in seconds.
+
+    Clockless like :class:`TONBlock`: advances only via the DT pin, so
+    headless tests stay deterministic without sleeping on wall-clock time.
+    """
+
+    type_name = "TOF"
+    category = "Timer"
+    input_pins = (
+        Pin("IN", PinDirection.INPUT, PinDType.BOOL),
+        Pin("PT", PinDirection.INPUT, PinDType.FLOAT, default=1.0),
+        Pin("DT", PinDirection.INPUT, PinDType.FLOAT, default=0.0),
+    )
+    output_pins = (
+        Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),
+        Pin("ET", PinDirection.OUTPUT, PinDType.FLOAT, default=0.0),
+    )
+
+    def __init__(self, block_id: str) -> None:
+        super().__init__(block_id)
+        self._elapsed: float = 0.0
+
+    def reset(self) -> None:
+        super().reset()
+        self._elapsed = 0.0
+
+    def evaluate(self) -> None:
+        dt = self.input("DT").value
+        if not isinstance(dt, (int, float)) or isinstance(dt, bool):
+            dt = 0.0
+        pt = self.input("PT").value
+        pt = pt if isinstance(pt, (int, float)) and not isinstance(pt, bool) else 0.0
+        if bool(self.input("IN").value):
+            self._elapsed = 0.0
+            self.output("Q").set(True)
+        else:
+            self._elapsed += dt
+            self.output("Q").set(self._elapsed < pt)
+        self.output("ET").set(self._elapsed)
+
+
+class TPBlock(Block):
+    """Pulse timer.
+
+    Inputs:
+        IN -- trigger (bool). Q turns true on a rising edge of IN and stays
+            true for PT seconds, regardless of IN afterwards.
+        PT -- preset pulse width in seconds (float, default 1.0).
+        DT -- seconds since the last scan cycle (float, default 0.0).
+    Outputs:
+        Q -- true for PT seconds after each IN rising edge.
+        ET -- elapsed time since the last rising edge, in seconds.
+
+    A rising edge while a pulse is active restarts the pulse. Clockless like
+    :class:`TONBlock`: advances only via the DT pin.
+    """
+
+    type_name = "TP"
+    category = "Timer"
+    input_pins = (
+        Pin("IN", PinDirection.INPUT, PinDType.BOOL),
+        Pin("PT", PinDirection.INPUT, PinDType.FLOAT, default=1.0),
+        Pin("DT", PinDirection.INPUT, PinDType.FLOAT, default=0.0),
+    )
+    output_pins = (
+        Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),
+        Pin("ET", PinDirection.OUTPUT, PinDType.FLOAT, default=0.0),
+    )
+
+    def __init__(self, block_id: str) -> None:
+        super().__init__(block_id)
+        self._elapsed: float = 0.0
+        self._active: bool = False
+        self._prev_in: bool = False
+
+    def reset(self) -> None:
+        super().reset()
+        self._elapsed = 0.0
+        self._active = False
+        self._prev_in = False
+
+    def evaluate(self) -> None:
+        dt = self.input("DT").value
+        if not isinstance(dt, (int, float)) or isinstance(dt, bool):
+            dt = 0.0
+        pt = self.input("PT").value
+        pt = pt if isinstance(pt, (int, float)) and not isinstance(pt, bool) else 0.0
+        in_ = bool(self.input("IN").value)
+        rising = in_ and not self._prev_in
+        self._prev_in = in_
+        if rising:
+            self._elapsed = 0.0
+            self._active = True
+        if self._active:
+            self._elapsed += dt
+            if self._elapsed >= pt:
+                self._active = False
+        self.output("Q").set(self._active)
+        self.output("ET").set(self._elapsed)
+
+
+class ClockBlock(Block):
+    """Periodic clock that fires true every cycle.
+
+    Inputs:
+        IN -- enable (bool, default true). While false, Q is false and the
+            phase resets.
+        PERIOD -- cycle time in seconds (float, default 1.0). Must be > 0.
+        ON -- seconds within each cycle that Q is true (float, default 0.5).
+        DT -- seconds since the last scan cycle (float, default 0.0).
+    Outputs:
+        Q -- true during the first ON seconds of every PERIOD cycle.
+        ET -- phase within the current cycle, in seconds.
+
+    Free-running clock: Q is true for ON seconds every PERIOD seconds.
+    Clockless like :class:`TONBlock`: advances only via the DT pin.
+    """
+
+    type_name = "CLK"
+    category = "Timer"
+    input_pins = (
+        Pin("IN", PinDirection.INPUT, PinDType.BOOL, default=True),
+        Pin("PERIOD", PinDirection.INPUT, PinDType.FLOAT, default=1.0),
+        Pin("ON", PinDirection.INPUT, PinDType.FLOAT, default=0.5),
+        Pin("DT", PinDirection.INPUT, PinDType.FLOAT, default=0.0),
+    )
+    output_pins = (
+        Pin("Q", PinDirection.OUTPUT, PinDType.BOOL),
+        Pin("ET", PinDirection.OUTPUT, PinDType.FLOAT, default=0.0),
+    )
+
+    def __init__(self, block_id: str) -> None:
+        super().__init__(block_id)
+        self._phase: float = 0.0
+
+    def reset(self) -> None:
+        super().reset()
+        self._phase = 0.0
+
+    def evaluate(self) -> None:
+        dt = self.input("DT").value
+        if not isinstance(dt, (int, float)) or isinstance(dt, bool):
+            dt = 0.0
+        period = self.input("PERIOD").value
+        period = (
+            period
+            if isinstance(period, (int, float)) and not isinstance(period, bool)
+            else 0.0
+        )
+        on = self.input("ON").value
+        on = on if isinstance(on, (int, float)) and not isinstance(on, bool) else 0.0
+        if bool(self.input("IN").value) and period > 0.0 and dt > 0.0:
+            self._phase += dt
+            self._phase %= period
+            self.output("Q").set(self._phase < on)
+        else:
+            self._phase = 0.0
+            self.output("Q").set(False)
+        self.output("ET").set(self._phase)
+
+
 class EQBlock(Block):
     """Output Q is true when IN1 == IN2 (numeric comparison).
 
@@ -385,6 +561,9 @@ default_registry.register("XOR", XORBlock)
 default_registry.register("SR", SRBlock)
 default_registry.register("TON", TONBlock)
 default_registry.register("CTU", CTUBlock)
+default_registry.register("TOF", TOFBlock)
+default_registry.register("TP", TPBlock)
+default_registry.register("CLK", ClockBlock)
 default_registry.register("EQ", EQBlock)
 default_registry.register("NE", NEBlock)
 default_registry.register("LT", LTBlock)
