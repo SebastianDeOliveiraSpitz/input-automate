@@ -91,12 +91,16 @@ class CaptureBlock(Block):
     Pins:
     - ``REGION`` (string, in) -- ``"x,y,w,h"`` rectangle of the captured frame
       to measure; empty = whole frame
-    - ``MODE`` (string, in) -- ``"color"`` (default): fraction of region
-      pixels matching ``COLOR`` within ``TOLERANCE``; ``"threshold"``: the
-      region's mean intensity as a fraction of 255
-    - ``COLOR`` (string, in) -- target BGR color ``"b,g,r"`` (color mode)
+    - ``MODE`` (string, in) -- measurement mode: ``"color"`` (default),
+      ``"threshold"``, ``"template"``, or ``"bar"``
+    - ``COLOR`` (string, in) -- target BGR color ``"b,g,r"`` (color/bar mode)
     - ``TOLERANCE`` (int, in) -- per-channel tolerance around ``COLOR`` (0..255)
     - ``LIMIT`` (float, in) -- ``Q`` is true while ``VALUE >= LIMIT``
+    - ``UNIT`` (string, in) -- ``"pixels"`` (default): ``REGION`` is absolute
+      frame pixels; ``"percent"``: ``REGION`` is 0..100 percent of the frame
+      width/height, converted to pixels at capture time
+    - ``TEMPLATE`` (string, in) -- filesystem path to a template image
+      (PNG/JPG); only used by ``"template"`` mode
 
     Outputs:
     - ``VALUE`` (float, out) -- measured fraction in ``[0, 1]``
@@ -116,6 +120,8 @@ class CaptureBlock(Block):
         Pin("COLOR", PinDirection.INPUT, PinDType.STRING, default=""),
         Pin("TOLERANCE", PinDirection.INPUT, PinDType.INT, default=40),
         Pin("LIMIT", PinDirection.INPUT, PinDType.FLOAT, default=0.5),
+        Pin("UNIT", PinDirection.INPUT, PinDType.STRING, default="pixels"),
+        Pin("TEMPLATE", PinDirection.INPUT, PinDType.STRING, default=""),
     )
     output_pins = (
         Pin("VALUE", PinDirection.OUTPUT, PinDType.FLOAT),

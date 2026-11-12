@@ -20,15 +20,22 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from typing import Protocol
 
+import cv2
 import numpy as np
 
 from input_automation.capture.base import Frame
 from input_automation.capture.mock import MockCaptureBackend
 from input_automation.engine.block import Block
 from input_automation.engine.wires import WireGraph
-from input_automation.vision.primitives import color_fraction, region_crop
+from input_automation.vision.primitives import (
+    bar_fill_fraction,
+    color_fraction,
+    region_crop,
+    template_match,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,17 +141,21 @@ class CaptureInputProvider:
 
     def _measure_block(self, block: Block, image: np.ndarray) -> None:
         mode = str(block.input("MODE").value or "color")
-        if mode not in ("color", "threshold"):
-            logger.debug("capture %s: unknown mode %r", block.id, mode)
-            self._write_safe(block)
-            return
         limit = _as_float(block.input("LIMIT").value, 0.5)
         try:
             region = self._region(image, block)
-            if mode == "threshold":
-                value = float(region.mean() / 255.0)
-            else:
+            if mode == "color":
                 value = self._color_fraction(region, block)
+            elif mode == "threshold":
+                value = float(region.mean() / 255.0)
+            elif mode == "template":
+                value = self._template_match(region, block)
+            elif mode == "bar":
+                value = self._bar_fill_fraction(region, block)
+            else:
+                logger.debug("capture %s: unknown mode %r", block.id, mode)
+                self._write_safe(block)
+                return
         except Exception as exc:  # noqa: BLE001 - one bad block must not abort a cycle
             logger.debug("capture %s: measurement failed: %s", block.id, exc)
             value = 0.0
@@ -160,7 +171,52 @@ class CaptureInputProvider:
                 return image  # whole frame
             raise ValueError(f"malformed region spec {spec!r}")
         x, y, w, h = parsed
-        return region_crop(image, x, y, w, h)  # ValueError if out of bounds
+        unit = str(block.input("UNIT").value or "pixels")
+        if unit == "percent":
+            frame_h, frame_w = image.shape[0], image.shape[1]
+            x = round(x / 100.0 * frame_w)
+            y = round(y / 100.0 * frame_h)
+            w = round(w / 100.0 * frame_w)
+            h = round(h / 100.0 * frame_h)
+        elif unit != "pixels":
+            logger.debug("capture %s: unknown unit %r; treating as pixels", block.id, unit)
+        return region_crop(image, x, y, w, h)  # ValueError if out of bounds / degenerate
+
+    @staticmethod
+    def _template_match(region: np.ndarray, block: Block) -> float:
+        template_path = str(block.input("TEMPLATE").value or "")
+        if not template_path:
+            logger.debug("capture %s: template mode with no TEMPLATE path", block.id)
+            return 0.0
+        if not os.path.isfile(template_path):
+            logger.debug(
+                "capture %s: TEMPLATE file not readable: %s", block.id, template_path
+            )
+            return 0.0
+        template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if template is None:
+            logger.debug(
+                "capture %s: could not decode TEMPLATE image: %s",
+                block.id,
+                template_path,
+            )
+            return 0.0
+        try:
+            return float(template_match(region, template).score)
+        except ValueError as exc:  # template larger than region, etc.
+            logger.debug("capture %s: template match failed: %s", block.id, exc)
+            return 0.0
+
+    @staticmethod
+    def _bar_fill_fraction(region: np.ndarray, block: Block) -> float:
+        color = _parse_color(str(block.input("COLOR").value or ""))
+        if color is None:
+            return 0.0
+        tolerance = _as_int(block.input("TOLERANCE").value, 40)
+        b, g, r = color
+        lower = (max(0, b - tolerance), max(0, g - tolerance), max(0, r - tolerance))
+        upper = (min(255, b + tolerance), min(255, g + tolerance), min(255, r + tolerance))
+        return float(bar_fill_fraction(region, lower, upper))
 
     @staticmethod
     def _color_fraction(region: np.ndarray, block: Block) -> float:

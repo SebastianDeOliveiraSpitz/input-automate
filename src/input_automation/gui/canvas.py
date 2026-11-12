@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QCompleter,
+    QDialog,
     QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
@@ -93,6 +94,7 @@ from input_automation.engine.wires import (
     WireTypeError,
 )
 from input_automation.gui.recording import InputRecorder
+from input_automation.gui.region_picker import RegionPickerDialog
 from input_automation.io.capture import CaptureInputProvider
 from input_automation.io.evdev import EvdevInputProvider, code_names
 from input_automation.io.uinput import UinputOutputProvider
@@ -318,7 +320,14 @@ PIN_DESCRIPTIONS: dict[str, str] = {
     "MODE": "Capture mode: 'color' or 'threshold'.",
     "COLOR": "Target BGR color 'b,g,r' (color mode).",
     "VALUE": "Value written to / read from the device (INT).",
+    "UNIT": "'pixels' = absolute frame pixels; 'percent' = 0..100 of frame width/height.",
+    "TEMPLATE": "Filesystem path to a template image (PNG/JPG) for template mode.",
 }
+
+
+# Capture block configuration shown in the properties panel (issue #18).
+CAPTURE_MODES = ("color", "threshold", "template", "bar")
+CAPTURE_UNITS = ("pixels", "percent")
 
 
 class _CanvasScene(QGraphicsScene):
@@ -1240,26 +1249,134 @@ class PropertiesPanel(QWidget):
         is_input = self._block.type_name == "INPUT"
         is_output = self._block.type_name == "OUTPUT"
         is_configurable = is_input or is_output
-        if not is_configurable:
+        self._capture = self._block.type_name == "CAPTURE"
+        if not is_configurable and not self._capture:
             # Only INPUT/OUTPUT blocks expose device selection / recording;
             # drop any stale references from a previously shown block.
             self._record_button = None
             self._record_status = None
             self._device_combo = None
+        self._mode_combo: QComboBox | None = None
+        self._template_row: QWidget | None = None
+        self._template_edit: QLineEdit | None = None
+        self._region_edit: QLineEdit | None = None
 
-        for name, pin in template.inputs.items():
-            if pin.value is None:  # no default -> not a configurable parameter
-                continue
-            if is_configurable and name == "DEVICE":
-                continue  # replaced by the device picker row below
+        if self._capture:
+            self._build_capture_rows(template, parameters)
+        else:
+            for name, pin in template.inputs.items():
+                if pin.value is None:  # no default -> not a configurable parameter
+                    continue
+                if is_configurable and name == "DEVICE":
+                    continue  # replaced by the device picker row below
+                editor = self._editor(name, pin.dtype, parameters.get(name, pin.value))
+                if (
+                    is_configurable
+                    and name == "CODE"
+                    and isinstance(editor, QLineEdit)
+                ):
+                    self._attach_code_completer(editor)
+                self._form.addRow(QLabel(name), editor)
+                self._editors[name] = (editor, pin.dtype)
+            if is_configurable:
+                self._build_device_row(parameters, is_output=is_output)
+                self._build_record_row()
+
+    def _build_capture_rows(
+        self, template: Any, parameters: dict[str, Any]
+    ) -> None:
+        """Properties rows for a CAPTURE block (issue #18, Layer 4).
+
+        MODE is a combobox over all four measurement modes; TEMPLATE is shown
+        only in template mode; REGION gains a "Select region…" picker button.
+        """
+        assert self._block is not None
+
+        # MODE combobox: color / threshold / template / bar.
+        mode_combo = QComboBox()
+        mode_combo.addItems(CAPTURE_MODES)
+        mode_combo.setCurrentText(
+            str(parameters.get("MODE") or template.inputs["MODE"].value or "color")
+        )
+        mode_combo.setToolTip(PIN_DESCRIPTIONS["MODE"])
+
+        region_edit = QLineEdit(str(parameters.get("REGION") or ""))
+        region_edit.setToolTip(PIN_DESCRIPTIONS["REGION"])
+
+        pick_button = QPushButton("Select region…")
+        pick_button.setToolTip(
+            "Grab a full-screen frame and drag a rectangle to define the region"
+        )
+
+        unit_combo = QComboBox()
+        unit_combo.addItems(CAPTURE_UNITS)
+        unit_combo.setCurrentText(
+            str(parameters.get("UNIT") or template.inputs["UNIT"].value or "pixels")
+        )
+        unit_combo.setToolTip(PIN_DESCRIPTIONS["UNIT"])
+
+        template_edit = QLineEdit(str(parameters.get("TEMPLATE") or ""))
+        template_edit.setToolTip(PIN_DESCRIPTIONS["TEMPLATE"])
+
+        def on_mode_changed(text: str) -> None:
+            self._set_value("MODE", text)
+            self._set_template_visibility(text == "template")
+
+        mode_combo.currentTextChanged.connect(on_mode_changed)
+        region_edit.textChanged.connect(partial(self._set_value, "REGION"))
+        pick_button.clicked.connect(self._pick_region)
+        unit_combo.currentTextChanged.connect(partial(self._set_value, "UNIT"))
+        template_edit.textChanged.connect(partial(self._set_value, "TEMPLATE"))
+
+        self._mode_combo = mode_combo
+        self._region_edit = region_edit
+        self._template_edit = template_edit
+
+        self._form.addRow(QLabel("MODE"), mode_combo)
+
+        region_row = QWidget()
+        region_layout = QHBoxLayout(region_row)
+        region_layout.setContentsMargins(0, 0, 0, 0)
+        region_layout.addWidget(region_edit, 1)
+        region_layout.addWidget(pick_button)
+        self._form.addRow(QLabel("REGION"), region_row)
+
+        self._form.addRow(QLabel("UNIT"), unit_combo)
+
+        template_row = QWidget()
+        template_layout = QHBoxLayout(template_row)
+        template_layout.setContentsMargins(0, 0, 0, 0)
+        template_layout.addWidget(template_edit, 1)
+        self._template_row = template_row
+        self._form.addRow(QLabel("TEMPLATE"), template_row)
+
+        # COLOR / TOLERANCE / LIMIT use the standard editors.
+        for name in ("COLOR", "TOLERANCE", "LIMIT"):
+            pin = template.inputs[name]
             editor = self._editor(name, pin.dtype, parameters.get(name, pin.value))
-            if is_configurable and name == "CODE" and isinstance(editor, QLineEdit):
-                self._attach_code_completer(editor)
             self._form.addRow(QLabel(name), editor)
             self._editors[name] = (editor, pin.dtype)
-        if is_configurable:
-            self._build_device_row(parameters, is_output=is_output)
-            self._build_record_row()
+
+        self._set_template_visibility(mode_combo.currentText() == "template")
+
+    def _set_template_visibility(self, show: bool) -> None:
+        if self._template_row is not None:
+            self._template_row.setVisible(show)
+        if self._template_edit is not None:
+            self._template_edit.setVisible(show)
+
+    def _pick_region(self) -> None:
+        """Open the full-screen region picker and write the result to REGION."""
+        assert self._block is not None and self._region_edit is not None
+        dialog = RegionPickerDialog(parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        rect = dialog.region()
+        if rect is None:
+            return
+        spec = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
+        self._region_edit.setText(spec)
+        self._set_value("REGION", spec)
 
     @staticmethod
     def _attach_code_completer(editor: QLineEdit) -> None:

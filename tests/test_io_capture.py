@@ -7,7 +7,11 @@ required.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import cv2
 import numpy as np
+import pytest
 from evdev import ecodes
 
 from input_automation.capture.mock import MockCaptureBackend
@@ -99,7 +103,15 @@ def _half_green_image() -> np.ndarray:
 def test_capture_block_pins() -> None:
     block = CaptureBlock("cap1")
     assert block.type_name == "CAPTURE"
-    assert set(block.inputs) == {"REGION", "MODE", "COLOR", "TOLERANCE", "LIMIT"}
+    assert set(block.inputs) == {
+        "REGION",
+        "MODE",
+        "COLOR",
+        "TOLERANCE",
+        "LIMIT",
+        "UNIT",
+        "TEMPLATE",
+    }
     assert set(block.outputs) == {"VALUE", "Q"}
     assert block.input("REGION").dtype is PinDType.STRING
     assert block.input("MODE").dtype is PinDType.STRING
@@ -113,6 +125,8 @@ def test_capture_block_pins() -> None:
     assert block.input("COLOR").value == ""
     assert block.input("TOLERANCE").value == 40
     assert block.input("LIMIT").value == 0.5
+    assert block.input("UNIT").value == "pixels"
+    assert block.input("TEMPLATE").value == ""
 
 
 def test_capture_block_registered_in_default_registry() -> None:
@@ -257,3 +271,86 @@ def test_scan_chain_capture_to_output() -> None:
     images[0] = _black_image()
     executor.run_once()
     assert output_device.events[-1] == ((ecodes.EV_KEY, ecodes.KEY_Q), 0, True)
+
+
+def _write_png(path: Path, image: np.ndarray) -> None:
+    assert cv2.imwrite(str(path), image), f"could not write {path}"
+
+
+# -- new measurement modes -------------------------------------------------
+
+
+def test_provider_template_mode(tmp_path: Path) -> None:
+    """Exact template inside the region → score 1.0, Q true at default limit."""
+    template_path = tmp_path / "tpl_template.png"
+    template = np.full((4, 4, 3), GREEN, dtype=np.uint8)
+    _write_png(template_path, template)
+    image = _black_image()  # 20x20 black with a green 4x4 block at (6, 4)
+    image[4:8, 6:10] = GREEN
+    backend = MockCaptureBackend(pattern_fn=lambda t: image)
+    provider = CaptureInputProvider(backend=backend)
+    block = _capture_block(mode="template")
+    block.input("TEMPLATE").set(str(template_path))
+    block.input("REGION").set("0,0,20,20")
+    _run_once(provider, block)
+    assert block.output("VALUE").value == pytest.approx(1.0, abs=1e-3)
+    assert block.output("Q").value is True
+
+
+def test_provider_template_missing_file_safe() -> None:
+    backend = MockCaptureBackend(pattern_fn=lambda t: _green_image())
+    provider = CaptureInputProvider(backend=backend)
+    block = _capture_block(mode="template")
+    block.input("TEMPLATE").set("/nonexistent/template.png")
+    _run_once(provider, block)
+    assert block.output("VALUE").value == 0.0
+    assert block.output("Q").value is False
+
+
+def test_provider_template_no_path_safe() -> None:
+    backend = MockCaptureBackend(pattern_fn=lambda t: _green_image())
+    provider = CaptureInputProvider(backend=backend)
+    block = _capture_block(mode="template")  # TEMPLATE defaults to ""
+    _run_once(provider, block)
+    assert block.output("VALUE").value == 0.0
+    assert block.output("Q").value is False
+
+
+def test_provider_bar_mode() -> None:
+    """Fraction of columns that are at least half filled → fill fraction."""
+    image = _black_image()  # 20x20; first 8 of 20 columns green → 0.4
+    image[:, :8] = GREEN
+    backend = MockCaptureBackend(pattern_fn=lambda t: image)
+    provider = CaptureInputProvider(backend=backend)
+    block = _capture_block(mode="bar", color="60,200,60", tolerance=40)
+    block.input("REGION").set("0,0,20,20")
+    _run_once(provider, block)
+    assert block.output("VALUE").value == pytest.approx(0.4)
+    assert block.output("Q").value is False  # 0.4 < default limit 0.5
+
+    block.input("LIMIT").set(0.4)
+    _run_once(provider, block)
+    assert block.output("Q").value is True
+
+
+def test_provider_percent_unit_conversion() -> None:
+    """Percent REGION is scaled to frame pixels before measuring."""
+    backend = MockCaptureBackend(pattern_fn=lambda t: _green_image())  # 20x20 green
+    provider = CaptureInputProvider(backend=backend)
+    block = _capture_block(color="60,200,60", tolerance=40)
+    block.input("UNIT").set("percent")
+    block.input("REGION").set("50,50,50,50")  # → 10,10,10,10 px, all green
+    _run_once(provider, block)
+    assert block.output("VALUE").value == pytest.approx(1.0)
+
+
+def test_provider_percent_unit_out_of_bounds_safe() -> None:
+    """Percent REGION that lands out of bounds → safe VALUE=0.0, Q=False."""
+    backend = MockCaptureBackend(pattern_fn=lambda t: _green_image())  # 20x20
+    provider = CaptureInputProvider(backend=backend)
+    block = _capture_block(color="60,200,60", tolerance=40)
+    block.input("UNIT").set("percent")
+    block.input("REGION").set("90,90,20,20")  # → 18,18,4,4 px → 22 > 20 out of bounds
+    _run_once(provider, block)
+    assert block.output("VALUE").value == 0.0
+    assert block.output("Q").value is False
