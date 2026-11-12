@@ -293,6 +293,7 @@ BLOCK_DESCRIPTIONS: dict[str, str] = {
     "XOR": "Output Q is true when exactly one input is true.",
     "NOT": "Output Q is the inverse of input IN.",
     "SR": "SET/RESET flip-flop: S sets Q, R resets Q (reset priority).",
+    "TOGGLE": "T flip-flop: Q toggles on each rising edge of IN (one-button on/off latching).",
     "TON": "On-delay timer: Q turns true once elapsed >= PT while IN stays true.",
     "TOF": "Off-delay timer: Q stays true while IN is true and for PT after IN goes false.",
     "TP": "Pulse timer: Q true for PT after each IN rising edge.",

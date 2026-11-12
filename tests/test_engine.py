@@ -243,3 +243,61 @@ def test_clk_fires_true_each_cycle() -> None:
     block.evaluate()
     assert block.output("Q").value is False
     assert block.output("ET").value == 0.0
+
+
+def test_toggle_block_category() -> None:
+    block = default_registry.create("TOGGLE", "tgl1")
+    assert block.category == "Logic"
+    assert default_registry.has("TOGGLE")
+
+
+def test_toggle_toggles_on_rising_edge() -> None:
+    block = default_registry.create("TOGGLE", "tgl1")
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is False
+    # rising edge: Q flips to true
+    block.input("IN").set(True)
+    block.evaluate()
+    assert block.output("Q").value is True
+    # holding IN high must not toggle again
+    block.evaluate()
+    assert block.output("Q").value is True
+    # falling edge does nothing
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is True
+    # second rising edge flips Q back to false
+    block.input("IN").set(True)
+    block.evaluate()
+    assert block.output("Q").value is False
+
+
+def test_toggle_starts_at_false_and_holds_state() -> None:
+    block = default_registry.create("TOGGLE", "tgl2")
+    assert block.output("Q").value is False
+    block.input("IN").set(True)
+    block.evaluate()
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is True  # latched on while IN is low
+    block.input("IN").set(True)
+    block.evaluate()
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is False  # latched off again
+
+
+def test_toggle_reset_clears_state() -> None:
+    block = default_registry.create("TOGGLE", "tgl3")
+    block.input("IN").set(True)
+    block.evaluate()
+    block.input("IN").set(False)
+    block.evaluate()
+    assert block.output("Q").value is True
+    block.reset()
+    assert block.output("Q").value is False
+    # after reset, a rising edge toggles again from false
+    block.input("IN").set(True)
+    block.evaluate()
+    assert block.output("Q").value is True

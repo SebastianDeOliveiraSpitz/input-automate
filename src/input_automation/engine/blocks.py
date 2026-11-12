@@ -1,8 +1,9 @@
 """Basic function blocks for the cyclic scan engine (T4/T5).
 
 Combinational blocks: AND, OR, XOR, NOT, EQ, NE, LT, GT, THRESHOLD.
-Sequential blocks: SR (SET/RESET flip-flop), TON (on-delay timer), TOF
-(off-delay timer), TP (pulse timer), CTU (up counter), CLK (periodic clock).
+Sequential blocks: SR (SET/RESET flip-flop), TOGGLE (T flip-flop), TON
+(on-delay timer), TOF (off-delay timer), TP (pulse timer), CTU (up counter),
+CLK (periodic clock).
 Signal blocks: PASS (pass-through), MUX (2:1 multiplexer).
 
 All blocks are headless-testable: no GUI or IO dependencies, all configuration
@@ -34,6 +35,7 @@ __all__ = [
     "PassThroughBlock",
     "SRBlock",
     "ThresholdBlock",
+    "ToggleBlock",
     "TONBlock",
     "XORBlock",
 ]
@@ -141,6 +143,43 @@ class SRBlock(Block):
             self._q = False
         elif bool(self.input("S").value):
             self._q = True
+        self.output("Q").set(self._q)
+
+
+class ToggleBlock(Block):
+    """T flip-flop: toggle Q on each rising edge of IN.
+
+    One-button on/off latching: pressing IN (low -> high) flips Q; holding IN
+    high never toggles again until IN goes low and rises again. Q keeps its
+    state while IN is low. Starts at false.
+
+    Edge-triggered like :class:`CTUBlock`: only transitions count, so a held
+    button never double-toggles. Issue #21.
+    """
+
+    type_name = "TOGGLE"
+    category = "Logic"
+    input_pins = (
+        Pin("IN", PinDirection.INPUT, PinDType.BOOL, default=False),
+    )
+    output_pins = (Pin("Q", PinDirection.OUTPUT, PinDType.BOOL, default=False),)
+
+    def __init__(self, block_id: str) -> None:
+        super().__init__(block_id)
+        self._q: bool = False
+        self._prev_in: bool = False
+
+    def reset(self) -> None:
+        super().reset()
+        self._q = False
+        self._prev_in = False
+
+    def evaluate(self) -> None:
+        in_ = bool(self.input("IN").value)
+        rising = in_ and not self._prev_in
+        self._prev_in = in_
+        if rising:
+            self._q = not self._q
         self.output("Q").set(self._q)
 
 
@@ -559,6 +598,7 @@ default_registry.register("OR", ORBlock)
 default_registry.register("NOT", NOTBlock)
 default_registry.register("XOR", XORBlock)
 default_registry.register("SR", SRBlock)
+default_registry.register("TOGGLE", ToggleBlock)
 default_registry.register("TON", TONBlock)
 default_registry.register("CTU", CTUBlock)
 default_registry.register("TOF", TOFBlock)
