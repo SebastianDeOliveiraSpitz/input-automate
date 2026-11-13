@@ -114,6 +114,67 @@ class TestTheme:
         assert theme == "light"
 
 
+class TestAdwaitaCanvasColors:
+    """Custom-drawn canvas elements (blocks, wires) derive their colors from
+    the application palette (issue #20) instead of hardcoded hex colors, so
+    they follow the Adwaita light/dark theme.
+    """
+
+    def test_colors_derive_from_palette(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        app = QApplication.instance()
+        assert app is not None
+        pal = canvas_module._app_palette()
+        assert canvas_module._body_background(pal) == pal.color(
+            QPalette.ColorRole.Base
+        )
+        assert canvas_module._title_background(pal, False) == pal.color(
+            QPalette.ColorRole.Button
+        )
+        assert canvas_module._title_background(pal, True) == pal.color(
+            QPalette.ColorRole.Button
+        ).darker(115)
+        assert canvas_module._border_color(pal) == pal.color(QPalette.ColorRole.Mid)
+        assert canvas_module._pin_label_color(pal) == pal.color(
+            QPalette.ColorRole.Text
+        )
+        assert canvas_module._input_pin_color(pal) == pal.color(
+            QPalette.ColorRole.Highlight
+        )
+        assert canvas_module._output_pin_color(pal) == pal.color(
+            QPalette.ColorRole.Mid
+        )
+
+    def test_colors_change_with_theme(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        app = QApplication.instance()
+        assert app is not None
+        settings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+
+        canvas = BlockCanvas()
+        qtbot.addWidget(canvas)
+        canvas.add_block("AND", "a1")
+        canvas.add_block("AND", "a2")
+        canvas.add_wire("a1", "Q", "a2", "IN1")
+
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "dark")
+        canvas_module.apply_theme(app, settings)
+        dark_pal = canvas_module._app_palette()
+
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "light")
+        canvas_module.apply_theme(app, settings)
+        light_pal = canvas_module._app_palette()
+
+        # Base / Button clearly differ between Adwaita dark and light.
+        assert dark_pal.color(QPalette.ColorRole.Base) != light_pal.color(
+            QPalette.ColorRole.Base
+        )
+        assert canvas_module._body_background(dark_pal) != canvas_module._body_background(
+            light_pal
+        )
+        assert canvas_module._title_background(dark_pal, False) != canvas_module._title_background(
+            light_pal, False
+        )
+
+
 class TestBlockCanvas:
     def test_add_block_instantiates_engine_block(self, qtbot) -> None:  # type: ignore[no-untyped-def]
         canvas = BlockCanvas()

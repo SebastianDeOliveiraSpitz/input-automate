@@ -177,6 +177,45 @@ def apply_theme(app: QApplication, settings: QSettings) -> str:
     return theme
 
 
+# -- theme-aware colors for custom-drawn canvas elements (issue #20) -------
+# BlockItem and WireItem paint themselves (QGraphicsItem.paint / QPen), so
+# they do not automatically follow the Adwaita theme. Derive their colors
+# from the application palette so blocks, wires and pins adapt to the
+# light/dark theme instead of using hardcoded hex colors.
+
+
+def _app_palette() -> QPalette:
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        return app.palette()
+    return QPalette()
+
+
+def _title_background(palette: QPalette, selected: bool) -> QColor:
+    base = palette.color(QPalette.ColorRole.Button)
+    return base.darker(115) if selected else base
+
+
+def _body_background(palette: QPalette) -> QColor:
+    return palette.color(QPalette.ColorRole.Base)
+
+
+def _border_color(palette: QPalette) -> QColor:
+    return palette.color(QPalette.ColorRole.Mid)
+
+
+def _pin_label_color(palette: QPalette) -> QColor:
+    return palette.color(QPalette.ColorRole.Text)
+
+
+def _input_pin_color(palette: QPalette) -> QColor:
+    return palette.color(QPalette.ColorRole.Highlight)
+
+
+def _output_pin_color(palette: QPalette) -> QColor:
+    return palette.color(QPalette.ColorRole.Mid)
+
+
 BLOCK_WIDTH = 160
 TITLE_HEIGHT = 26
 PIN_ROW = 22
@@ -463,13 +502,14 @@ class BlockItem(QGraphicsRectItem):
         del widget  # unused
         rect = self.rect()
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        palette = _app_palette()
 
         title = QRectF(0, 0, rect.width(), TITLE_HEIGHT)
-        painter.fillRect(title, QColor("#4a4f5a") if selected else QColor("#343940"))
+        painter.fillRect(title, _title_background(palette, selected))
         font = QFont()
         font.setBold(True)
         painter.setFont(font)
-        painter.setPen(QPen(QColor("#ffffff")))
+        painter.setPen(QPen(palette.color(QPalette.ColorRole.ButtonText)))
         painter.drawText(
             title.adjusted(8, 0, -8, 0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -477,17 +517,17 @@ class BlockItem(QGraphicsRectItem):
         )
 
         body = QRectF(0, TITLE_HEIGHT, rect.width(), rect.height() - TITLE_HEIGHT)
-        painter.fillRect(body, QColor("#ffffff"))
-        painter.setPen(QPen(QColor("#c4c8cc"), 1.0))
+        painter.fillRect(body, _body_background(palette))
+        painter.setPen(QPen(_border_color(palette), 1.0))
         painter.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))
         painter.drawLine(0, TITLE_HEIGHT, int(rect.width()), TITLE_HEIGHT)
 
         painter.setFont(QFont())
-        painter.setPen(QPen(QColor("#111827")))
+        painter.setPen(QPen(_pin_label_color(palette)))
         for index, pin in enumerate(self.input_pins):
             y = self._pin_center_y(index, len(self.input_pins))
             painter.fillRect(
-                QRectF(1.5, y - PORT / 2, PORT, PORT), QColor("#007acc")
+                QRectF(1.5, y - PORT / 2, PORT, PORT), _input_pin_color(palette)
             )
             painter.drawText(
                 QRectF(14, y - 10, rect.width() - 18, 20),
@@ -498,7 +538,7 @@ class BlockItem(QGraphicsRectItem):
             y = self._pin_center_y(index, len(self.output_pins))
             painter.fillRect(
                 QRectF(BLOCK_WIDTH - PORT - 1.5, y - PORT / 2, PORT, PORT),
-                QColor("#6b7280"),
+                _output_pin_color(palette),
             )
             painter.drawText(
                 QRectF(2, y - 10, BLOCK_WIDTH - PORT - 6, 20),
@@ -568,7 +608,12 @@ class WireItem(QGraphicsLineItem):
 
     def _refresh_pen(self) -> None:
         selected = self.isSelected()
-        color = QColor("#1f77b4") if selected else QColor("#6b7280")
+        palette = _app_palette()
+        color = (
+            palette.color(QPalette.ColorRole.Highlight)
+            if selected
+            else palette.color(QPalette.ColorRole.Mid)
+        )
         width = 2.6 if selected else 1.6
         self.setPen(QPen(color, width))
 
@@ -814,7 +859,9 @@ class BlockCanvas(QGraphicsView):
         item = self._items[src_block]
         start = item.port_scene_pos(src_pin, PinDirection.OUTPUT)
         rubber = QGraphicsLineItem(QLineF(start, start))
-        rubber.setPen(QPen(QColor("#1f77b4"), 1.6, Qt.PenStyle.DashLine))
+        rubber.setPen(
+            QPen(_app_palette().color(QPalette.ColorRole.Highlight), 1.6, Qt.PenStyle.DashLine)
+        )
         rubber.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._scene.addItem(rubber)
         self._rubber = rubber
