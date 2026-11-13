@@ -17,6 +17,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QCloseEvent,
+    QColor,
     QDrag,
     QDragEnterEvent,
     QDragMoveEvent,
@@ -79,6 +80,69 @@ class TestBlockPalette:
         assert matches
         palette.setCurrentItem(matches[0])
         assert palette.selected_block_type() == "AND"
+
+
+class TestBlockPaletteTheme:
+    """BlockPalette header bars and block tints derive from QApplication.palette()
+    (issue #20) so they invert correctly when the theme is switched instead of
+    staying coupled to the colors present at construction time.
+    """
+
+    def test_colors_derive_from_palette(self, qtbot) -> None:  # type: ignore[no-untyped-def]
+        app = QApplication.instance()
+        assert app is not None
+        pal = canvas_module._app_palette()
+
+        palette = BlockPalette()
+        qtbot.addWidget(palette)
+
+        header = block = None
+        for index in range(palette.count()):
+            item = palette.item(index)
+            assert item is not None
+            if item.flags() == Qt.ItemFlag.NoItemFlags:
+                header = item
+            elif block is None:
+                block = item
+        assert header is not None
+        assert block is not None
+
+        assert header.background().color() == pal.color(QPalette.ColorRole.Highlight)
+        assert header.foreground().color() == pal.color(
+            QPalette.ColorRole.HighlightedText
+        )
+        expected_tint = QColor(pal.color(QPalette.ColorRole.Highlight))
+        expected_tint.setAlpha(22)
+        assert block.background().color() == expected_tint
+
+    def test_colors_change_with_theme(self, qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        app = QApplication.instance()
+        assert app is not None
+        settings = QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat)
+
+        palette = BlockPalette()
+        qtbot.addWidget(palette)
+        header = None
+        for index in range(palette.count()):
+            item = palette.item(index)
+            assert item is not None
+            if item.flags() == Qt.ItemFlag.NoItemFlags:
+                header = item
+                break
+        assert header is not None
+
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "dark")
+        canvas_module.apply_theme(app, settings)
+        palette.refresh_theme()
+        dark_bg = header.background().color()
+
+        settings.setValue(canvas_module.THEME_SETTING_KEY, "light")
+        canvas_module.apply_theme(app, settings)
+        palette.refresh_theme()
+        light_bg = header.background().color()
+
+        # The Adwaita dark/light Highlight accents differ, so the palette inverts.
+        assert dark_bg != light_bg
 
 
 class TestTheme:

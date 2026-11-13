@@ -1126,14 +1126,16 @@ class BlockPalette(QListWidget):
     # not listed here are appended alphabetically at the end.
     CATEGORY_ORDER: list[str] = ["Input", "Output", "Logic", "Timer"]
 
-    # Accent color per category header. Chosen to contrast with white header
-    # text in both light and dark themes.
-    _CATEGORY_COLORS: dict[str, QColor] = {
-        "Input": QColor(25, 118, 210),     # blue
-        "Output": QColor(56, 142, 60),     # green
-        "Logic": QColor(123, 31, 162),     # purple
-        "Timer": QColor(230, 81, 0),       # orange
-    }
+    # Item data role marking whether an item is a category header or a block
+    # entry; used by refresh_theme() to re-apply the right colors.
+    _ITEM_KIND_ROLE: int = Qt.ItemDataRole.UserRole + 1
+    _KIND_HEADER = "header"
+    _KIND_BLOCK = "block"
+
+    # -- theme-aware colors (issue #20) -----------------------------------
+    # All palette colors are derived from QApplication.palette() so the
+    # header bars and block tints invert correctly when the light/dark theme
+    # is switched. No saturated hardcoded category colors anymore.
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1179,24 +1181,61 @@ class BlockPalette(QListWidget):
         font = item.font()
         font.setBold(True)
         item.setFont(font)
-        color = self._CATEGORY_COLORS.get(category, QColor(96, 96, 96))
-        item.setBackground(color)
-        item.setForeground(QColor(255, 255, 255))
+        background, foreground = self._header_colors()
+        item.setBackground(background)
+        item.setForeground(foreground)
         item.setSizeHint(QSize(0, 26))
         item.setToolTip(f"{category} function blocks")
+        item.setData(self._ITEM_KIND_ROLE, self._KIND_HEADER)
         self.addItem(item)
 
     def _add_block_item(self, type_name: str, category: str) -> None:
         item = QListWidgetItem(type_name)
         item.setData(Qt.ItemDataRole.UserRole, type_name)
         item.setToolTip(BLOCK_DESCRIPTIONS.get(type_name, f"{type_name} function block."))
-        # Subtle category tint so blocks visually belong to their group.
-        color = self._CATEGORY_COLORS.get(category)
-        if color is not None:
-            tint = QColor(color)
-            tint.setAlpha(20)
-            item.setBackground(tint)
+        # Subtle theme-derived tint so blocks visually belong to their group.
+        item.setBackground(self._block_tint())
+        item.setData(self._ITEM_KIND_ROLE, self._KIND_BLOCK)
         self.addItem(item)
+
+    # -- theme-aware color helpers (issue #20) ----------------------------
+
+    def _header_colors(self) -> tuple[QColor, QColor]:
+        """(background, foreground) for a category header row.
+
+        Uses the theme accent (Highlight) with HighlightedText so the header
+        bar inverts correctly with the light/dark theme switcher.
+        """
+        pal = _app_palette()
+        return pal.color(QPalette.ColorRole.Highlight), pal.color(
+            QPalette.ColorRole.HighlightedText
+        )
+
+    def _block_tint(self) -> QColor:
+        """Subtle per-block tint derived from the current theme accent."""
+        color = _app_palette().color(QPalette.ColorRole.Highlight)
+        color.setAlpha(22)
+        return color
+
+    def refresh_theme(self) -> None:
+        """Re-apply theme-derived colors to every palette item.
+
+        Call this after the application palette changes (the light/dark theme
+        switcher) so header bars and block tints invert correctly instead of
+        staying coupled to the colors present at construction time.
+        """
+        background, foreground = self._header_colors()
+        tint = self._block_tint()
+        for index in range(self.count()):
+            item = self.item(index)
+            if item is None:
+                continue
+            kind = item.data(self._ITEM_KIND_ROLE)
+            if kind == self._KIND_HEADER:
+                item.setBackground(background)
+                item.setForeground(foreground)
+            elif kind == self._KIND_BLOCK:
+                item.setBackground(tint)
 
     def mimeTypes(self) -> list[str]:
         return [BLOCK_MIME, "text/plain"]
@@ -1647,11 +1686,11 @@ class CanvasWindow(QMainWindow):
         self._recent = RecentProjects(self._settings)
         self.setCentralWidget(self._canvas)
 
-        palette = BlockPalette()
-        self._canvas.set_palette(palette)
+        self._palette = BlockPalette()
+        self._canvas.set_palette(self._palette)
         self._palette_dock = QDockWidget("Palette", self)
         self._palette_dock.setObjectName("palette_dock")
-        self._palette_dock.setWidget(palette)
+        self._palette_dock.setWidget(self._palette)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._palette_dock)
 
         self._properties = PropertiesPanel()
@@ -1868,6 +1907,7 @@ class CanvasWindow(QMainWindow):
             THEME_SETTING_KEY, "dark" if checked else "light"
         )
         self._theme = apply_theme(cast(QApplication, app), self._settings)
+        self._palette.refresh_theme()
 
     def _refresh_recent_menu(self) -> None:
         self._recent_menu.clear()
