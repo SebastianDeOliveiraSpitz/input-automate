@@ -94,7 +94,7 @@ from input_automation.engine.wires import (
     WireTypeError,
 )
 from input_automation.gui.recording import InputRecorder
-from input_automation.gui.region_picker import RegionPickerDialog
+from input_automation.gui.region_picker import PixelPickerDialog, RegionPickerDialog
 from input_automation.io.capture import CaptureInputProvider
 from input_automation.io.evdev import EvdevInputProvider, code_names
 from input_automation.io.uinput import UinputOutputProvider
@@ -348,6 +348,8 @@ BLOCK_DESCRIPTIONS: dict[str, str] = {
     "INPUT": "Reads an evdev device: Q true when CODE is pressed; VALUE holds the code.",
     "OUTPUT": "Writes to a uinput device: presses CODE when Q is true.",
     "CAPTURE": "Screen region analysis: VALUE/Q reflect pixels matching COLOR within TOLERANCE.",
+    "PIXEL_COLOR": "Samples one pixel; Q true when its color matches COLOR within TOLERANCE.",
+    "REGION_COMPARE": "Region-level trigger: Q true when a frame comparison exceeds TOLERANCE.",
 }
 
 # Short descriptions for the configurable (defaulted) input pins shown in the
@@ -367,12 +369,16 @@ PIN_DESCRIPTIONS: dict[str, str] = {
     "VALUE": "Value written to / read from the device (INT).",
     "UNIT": "'pixels' = absolute frame pixels; 'percent' = 0..100 of frame width/height.",
     "TEMPLATE": "Filesystem path to a template image (PNG/JPG) for template mode.",
+    "X": "Pixel X coordinate on the captured frame.",
+    "Y": "Pixel Y coordinate on the captured frame.",
+    "REFERENCE": "Reference image path (PNG/JPG) for REGION COMPARE template mode.",
 }
 
 
 # Capture block configuration shown in the properties panel (issue #18).
 CAPTURE_MODES = ("color", "threshold", "template", "bar")
 CAPTURE_UNITS = ("pixels", "percent")
+REGION_COMPARE_MODES = ("diff", "shape", "template")
 
 
 class _CanvasScene(QGraphicsScene):
@@ -1342,7 +1348,10 @@ class PropertiesPanel(QWidget):
         is_output = self._block.type_name == "OUTPUT"
         is_configurable = is_input or is_output
         self._capture = self._block.type_name == "CAPTURE"
-        if not is_configurable and not self._capture:
+        self._pixel_color = self._block.type_name == "PIXEL_COLOR"
+        self._region_compare = self._block.type_name == "REGION_COMPARE"
+        capture_like = self._capture or self._pixel_color or self._region_compare
+        if not is_configurable and not capture_like:
             # Only INPUT/OUTPUT blocks expose device selection / recording;
             # drop any stale references from a previously shown block.
             self._record_button = None
@@ -1352,9 +1361,15 @@ class PropertiesPanel(QWidget):
         self._template_row: QWidget | None = None
         self._template_edit: QLineEdit | None = None
         self._region_edit: QLineEdit | None = None
+        self._reference_row: QWidget | None = None
+        self._reference_edit: QLineEdit | None = None
 
         if self._capture:
             self._build_capture_rows(template, parameters)
+        elif self._pixel_color:
+            self._build_pixel_color_rows(template, parameters)
+        elif self._region_compare:
+            self._build_region_compare_rows(template, parameters)
         else:
             for name, pin in template.inputs.items():
                 if pin.value is None:  # no default -> not a configurable parameter
@@ -1456,6 +1471,100 @@ class PropertiesPanel(QWidget):
             self._template_row.setVisible(show)
         if self._template_edit is not None:
             self._template_edit.setVisible(show)
+
+    def _set_reference_visibility(self, show: bool) -> None:
+        if self._reference_row is not None:
+            self._reference_row.setVisible(show)
+        if self._reference_edit is not None:
+            self._reference_edit.setVisible(show)
+
+    def _build_pixel_color_rows(
+        self, template: Any, parameters: dict[str, Any]
+    ) -> None:
+        """Properties rows for a PIXEL COLOR block (issue #18).
+
+        Standard editors for X/Y/COLOR/TOLERANCE plus a "Pick pixel…"
+        button that grabs a full-screen frame and opens the pixel picker.
+        """
+        assert self._block is not None
+
+        for name in ("X", "Y", "COLOR", "TOLERANCE"):
+            pin = template.inputs[name]
+            editor = self._editor(name, pin.dtype, parameters.get(name, pin.value))
+            self._form.addRow(QLabel(name), editor)
+            self._editors[name] = (editor, pin.dtype)
+
+        pick_button = QPushButton("Pick pixel…")
+        pick_button.setToolTip(
+            "Grab a full-screen frame, click a pixel, and fill X, Y, COLOR from it"
+        )
+        pick_button.clicked.connect(self._pick_pixel)
+        self._form.addRow(pick_button)
+
+    def _build_region_compare_rows(
+        self, template: Any, parameters: dict[str, Any]
+    ) -> None:
+        """Properties rows for a REGION COMPARE block (issue #18).
+
+        REGION + MODE combobox (diff/shape/template); REFERENCE is shown
+        only in template mode; TOLERANCE uses the standard float editor.
+        """
+        assert self._block is not None
+
+        mode_combo = QComboBox()
+        mode_combo.addItems(REGION_COMPARE_MODES)
+        mode_combo.setCurrentText(
+            str(parameters.get("MODE") or template.inputs["MODE"].value or "diff")
+        )
+        mode_combo.setToolTip(PIN_DESCRIPTIONS.get("MODE", ""))
+
+        region_edit = QLineEdit(str(parameters.get("REGION") or ""))
+        region_edit.setToolTip(PIN_DESCRIPTIONS["REGION"])
+
+        reference_edit = QLineEdit(str(parameters.get("REFERENCE") or ""))
+        reference_edit.setToolTip(PIN_DESCRIPTIONS["REFERENCE"])
+        reference_row = QWidget()
+        reference_layout = QHBoxLayout(reference_row)
+        reference_layout.setContentsMargins(0, 0, 0, 0)
+        reference_layout.addWidget(reference_edit, 1)
+
+        def on_mode_changed(text: str) -> None:
+            self._set_value("MODE", text)
+            self._set_reference_visibility(text == "template")
+
+        mode_combo.currentTextChanged.connect(on_mode_changed)
+        region_edit.textChanged.connect(partial(self._set_value, "REGION"))
+        reference_edit.textChanged.connect(partial(self._set_value, "REFERENCE"))
+
+        self._mode_combo = mode_combo
+        self._region_edit = region_edit
+        self._reference_row = reference_row
+        self._reference_edit = reference_edit
+
+        self._form.addRow(QLabel("MODE"), mode_combo)
+        self._form.addRow(QLabel("REGION"), region_edit)
+        self._form.addRow(QLabel("REFERENCE"), reference_row)
+
+        pin = template.inputs["TOLERANCE"]
+        editor = self._editor("TOLERANCE", pin.dtype, parameters.get("TOLERANCE", pin.value))
+        self._form.addRow(QLabel("TOLERANCE"), editor)
+        self._editors["TOLERANCE"] = (editor, pin.dtype)
+
+        self._set_reference_visibility(mode_combo.currentText() == "template")
+
+    def _pick_pixel(self) -> None:
+        """Open the full-screen pixel picker and write X/Y/COLOR to the block."""
+        assert self._block is not None
+        dialog = PixelPickerDialog(parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.pixel()
+        if result is None:
+            return
+        x, y, b, g, r = result
+        self._set_value("X", x)
+        self._set_value("Y", y)
+        self._set_value("COLOR", f"{b},{g},{r}")
 
     def _pick_region(self) -> None:
         """Open the full-screen region picker and write the result to REGION."""

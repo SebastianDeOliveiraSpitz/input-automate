@@ -132,6 +132,89 @@ class CaptureBlock(Block):
         """Pass-through: nothing to compute; the provider drives the pins."""
 
 
+class PixelColorBlock(Block):
+    """Sample one screen pixel each cycle and compare it to a target color (issue #18).
+
+    Pins:
+    - ``X`` (int, in) -- pixel X coordinate, default 0
+    - ``Y`` (int, in) -- pixel Y coordinate, default 0
+    - ``COLOR`` (string, in) -- target BGR color ``"b,g,r"``, default ``"0,0,0"``
+    - ``TOLERANCE`` (int, in) -- per-channel tolerance around ``COLOR`` (0..255), default 40
+
+    Outputs:
+    - ``VALUE`` (int, out) -- ``1`` when the pixel matches, ``0`` otherwise
+    - ``Q`` (bool, out) -- ``VALUE == 1``
+
+    The block never touches the screen.
+    :class:`input_automation.io.capture.CaptureInputProvider` grabs a frame and
+    writes ``VALUE``/``Q`` before each cycle; :meth:`evaluate` is a
+    pass-through so values wired from predecessors are current.
+    """
+
+    type_name = "PIXEL_COLOR"
+    category = "Input"
+    input_pins = (
+        Pin("X", PinDirection.INPUT, PinDType.INT, default=0),
+        Pin("Y", PinDirection.INPUT, PinDType.INT, default=0),
+        Pin("COLOR", PinDirection.INPUT, PinDType.STRING, default="0,0,0"),
+        Pin("TOLERANCE", PinDirection.INPUT, PinDType.INT, default=40),
+    )
+    output_pins = (
+        Pin("VALUE", PinDirection.OUTPUT, PinDType.INT, default=0),
+        Pin("Q", PinDirection.OUTPUT, PinDType.BOOL, default=False),
+    )
+
+    def evaluate(self) -> None:
+        """Pass-through: output pins hold the state the IO provider wrote."""
+
+
+class RegionCompareBlock(Block):
+    """Compare a screen region between two frames and report the difference (issue #18).
+
+    Modes:
+    - ``"diff"`` -- current region vs the previous frame's same region;
+      VALUE is the fraction of changed pixels in ``[0, 1]``.
+    - ``"shape"`` -- current region vs the previous frame's same region,
+      ignoring colors (edge/structural similarity only);
+      VALUE is a shape-similarity score in ``[0, 1]``.
+    - ``"template"`` -- current region vs the reference image file given by
+      ``REFERENCE``; VALUE is the template-match score in ``[0, 1]``.
+
+    Pins:
+    - ``REGION`` (string, in) -- ``"x,y,w,h"`` rectangle; empty = whole frame
+    - ``MODE`` (string, in) -- ``"diff"`` | ``"shape"`` | ``"template"``, default ``"diff"``
+    - ``REFERENCE`` (string, in) -- reference image path (template mode only), default ""
+    - ``TOLERANCE`` (float, in) -- difference threshold 0.0..1.0, default 0.1
+
+    Outputs:
+    - ``VALUE`` (float, out) -- measured difference/similarity in ``[0, 1]``
+    - ``Q`` (bool, out) -- ``VALUE >= TOLERANCE``
+
+    The block never touches the screen.
+    :class:`input_automation.io.capture.CaptureInputProvider` keeps the
+    previous frame in memory and writes ``VALUE``/``Q`` before each cycle;
+    :meth:`evaluate` is a pass-through so values wired from predecessors are current.
+    """
+
+    type_name = "REGION_COMPARE"
+    category = "Input"
+    input_pins = (
+        Pin("REGION", PinDirection.INPUT, PinDType.STRING, default=""),
+        Pin("MODE", PinDirection.INPUT, PinDType.STRING, default="diff"),
+        Pin("REFERENCE", PinDirection.INPUT, PinDType.STRING, default=""),
+        Pin("TOLERANCE", PinDirection.INPUT, PinDType.FLOAT, default=0.1),
+    )
+    output_pins = (
+        Pin("VALUE", PinDirection.OUTPUT, PinDType.FLOAT, default=0.0),
+        Pin("Q", PinDirection.OUTPUT, PinDType.BOOL, default=False),
+    )
+
+    def evaluate(self) -> None:
+        """Pass-through: output pins hold the state the IO provider wrote."""
+
+
 default_registry.register("INPUT", InputBlock)
 default_registry.register("OUTPUT", OutputBlock)
 default_registry.register("CAPTURE", CaptureBlock)
+default_registry.register("PIXEL_COLOR", PixelColorBlock)
+default_registry.register("REGION_COMPARE", RegionCompareBlock)
