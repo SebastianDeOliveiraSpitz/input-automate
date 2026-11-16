@@ -1242,6 +1242,11 @@ class BlockPalette(QListWidget):
                 item.setForeground(foreground)
             elif kind == self._KIND_BLOCK:
                 item.setBackground(tint)
+        # QListWidgetItem.setBackground/setForeground can defer the visual
+        # update until the next natural repaint, leaving the pane showing
+        # stale colors after a theme switch. Force an immediate repaint so
+        # the palette inverts in sync with the rest of the UI (issue #20).
+        self.viewport().update()
 
     def mimeTypes(self) -> list[str]:
         return [BLOCK_MIME, "text/plain"]
@@ -1681,7 +1686,10 @@ class PropertiesPanel(QWidget):
             "into the CODE field"
         )
         status = QLabel("")
-        status.setStyleSheet("color: #6b7280; font-size: 11px;")
+        # Let the active palette supply the text color so the status label
+        # follows the light/dark theme instead of a hardcoded hex color
+        # (issue #20 acceptance: no hardcoded hex in GUI painting code).
+        status.setStyleSheet("font-size: 11px;")
         self._record_button = button
         self._record_status = status
 
