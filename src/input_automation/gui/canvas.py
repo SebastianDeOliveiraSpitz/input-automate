@@ -1251,6 +1251,14 @@ class BlockPalette(QListWidget):
         # the palette inverts in sync with the rest of the UI (issue #20).
         self.viewport().update()
         self.update()
+        # Scrollbars are child widgets that may keep their construction-time
+        # palette; apply the themed palette to both scrollbars so the scroll
+        # bar inverts with the rest of the pane (issue #20).
+        for bar in (self.horizontalScrollBar(), self.verticalScrollBar()):
+            if bar is not None:
+                bar.setPalette(pal)
+                bar.setAutoFillBackground(True)
+                bar.update()
 
     def mimeTypes(self) -> list[str]:
         return [BLOCK_MIME, "text/plain"]
