@@ -1230,6 +1230,9 @@ class BlockPalette(QListWidget):
         switcher) so header bars and block tints invert correctly instead of
         staying coupled to the colors present at construction time.
         """
+        pal = _app_palette()
+        self.setPalette(pal)  # ensure the QListWidget widget itself uses the themed palette
+        self.setAutoFillBackground(True)
         background, foreground = self._header_colors()
         tint = self._block_tint()
         for index in range(self.count()):
@@ -1247,6 +1250,7 @@ class BlockPalette(QListWidget):
         # stale colors after a theme switch. Force an immediate repaint so
         # the palette inverts in sync with the rest of the UI (issue #20).
         self.viewport().update()
+        self.update()
 
     def mimeTypes(self) -> list[str]:
         return [BLOCK_MIME, "text/plain"]
